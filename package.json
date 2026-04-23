@@ -2,9 +2,10 @@
   "name": "lecturelog_backend",
   "version": "1.0.0",
   "description": "It is a backend for the lecture log project. It provides APIs for the frontend to interact with the database and perform various operations related to lectures, users, and logs.",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,12 @@
   "author": "CODE_KNIGHT",
   "license": "ISC",
   "type": "module",
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  },
   "bugs": {
     "url": "https://github.com/Coder-Delta/LectureLog_backend/issues"
   },
