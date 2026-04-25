@@ -1,0 +1,127 @@
+import pool from '../config/database.config.js';
+import axios from 'axios';
+import FormData from 'form-data';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+export const registerStudent = async (req, res) => {
+  const { name, email, roll_number, college_id, year } = req.body;
+  const imageFile = req.file;
+
+  if (!imageFile) {
+    return res.status(400).json({ message: 'Student photo is required for registration' });
+  }
+
+  try {
+    // 1. Get embedding from AI Service first to ensure photo is valid
+    const aiFormData = new FormData();
+    aiFormData.append('file', fs.createReadStream(imageFile.path));
+
+    const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+      headers: aiFormData.getHeaders(),
+    });
+
+    const embedding = aiResponse.data.embedding;
+
+    if (!embedding || !Array.isArray(embedding)) {
+      throw new Error('AI Service failed to generate a valid face embedding.');
+    }
+
+    // 2. Save to MySQL (Including the face vector as a JSON string)
+    const [result] = await pool.query(
+      'INSERT INTO students (name, email, roll_number, college_id, year, face_embedding) VALUES (?, ?, ?, ?, ?, ?)',
+      [name, email, roll_number, college_id, year, JSON.stringify(embedding)]
+    );
+    const studentId = result.insertId;
+
+    // 3. Save photo permanently
+    const studentImgDir = path.join('public', 'students');
+    if (!fs.existsSync(studentImgDir)) {
+      fs.mkdirSync(studentImgDir, { recursive: true });
+    }
+    const finalPath = path.join(studentImgDir, `${studentId}.jpg`);
+    fs.copyFileSync(imageFile.path, finalPath);
+
+    // Clean up temp file
+    if (fs.existsSync(imageFile.path)) {
+      fs.unlinkSync(imageFile.path);
+    }
+
+    res.status(201).json({ message: 'Student registered successfully', studentId });
+  } catch (err) {
+    console.error('Registration Error:', err);
+    if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
+    res.status(500).json({ message: err.response?.data?.error || err.message });
+  }
+};
+
+export const getStudents = async (req, res) => {
+  try {
+    const [students] = await pool.query('SELECT id, name, email, roll_number, college_id, year, face_embedding, created_at FROM students ORDER BY created_at DESC');
+    res.json(students);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getMyAttendance = async (req, res) => {
+  const studentId = req.user.id;
+  try {
+    const [attendance] = await pool.query(`
+      SELECT a.*, s.start_time, sub.name as subject_name
+      FROM attendance a
+      JOIN sessions s ON a.session_id = s.id
+      JOIN subjects sub ON s.subject_id = sub.id
+      WHERE a.student_id = ?
+      ORDER BY s.start_time DESC
+    `, [studentId]);
+    res.json(attendance);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getMyStats = async (req, res) => {
+  const studentId = req.user.id;
+  try {
+    const [presentCount] = await pool.query(
+      'SELECT COUNT(*) as count FROM attendance WHERE student_id = ? AND status = "present"',
+      [studentId]
+    );
+    const [totalCount] = await pool.query(
+      'SELECT COUNT(*) as count FROM attendance WHERE student_id = ?',
+      [studentId]
+    );
+    res.json({
+      present: presentCount[0].count,
+      total: totalCount[0].count
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const deleteStudent = async (req, res) => {
+  const { id } = req.params;
+  try {
+    // 1. Delete photo if exists
+    const photoPath = path.join('public', 'students', `${id}.jpg`);
+    if (fs.existsSync(photoPath)) {
+      fs.unlinkSync(photoPath);
+    }
+
+    // 2. Delete from database
+    const [result] = await pool.query('DELETE FROM students WHERE id = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    res.json({ message: 'Student deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

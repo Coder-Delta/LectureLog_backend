@@ -1,4 +1,4 @@
-import { ApiError } from "./index.js";
+import ApiError from "./apiError.js";
 
 export const assertRequired = (payload, fields) => {
   const missing = fields.filter((field) => payload[field] === undefined || payload[field] === "");

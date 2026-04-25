@@ -1,3 +1,5 @@
+import mysql from "mysql2/promise";
+import dotenv from "dotenv";
 import {
   attendanceModel,
   classroomModel,
@@ -9,10 +11,15 @@ import {
   userModel
 } from "../models/index.js";
 
+dotenv.config();
+
 export const DATABASE_NAME = process.env.DB_NAME || "lecturelog";
-export const DATABASE_PROVIDER = process.env.DB_PROVIDER || "postgresql";
+export const DATABASE_PROVIDER = process.env.DB_PROVIDER || "mysql";
 export const DATABASE_URL =
-  process.env.DATABASE_URL || process.env.POSTGRES_URL || `postgresql://postgres:postgres@127.0.0.1:5432/${DATABASE_NAME}`;
+  process.env.DATABASE_URL ||
+  process.env.MYSQL_URL ||
+  process.env.POSTGRES_URL ||
+  `mysql://${process.env.DB_USER || "root"}:${process.env.DB_PASSWORD || ""}@${process.env.DB_HOST || "localhost"}:${process.env.DB_PORT || "3306"}/${DATABASE_NAME}`;
 
 export const databaseDesign = {
   provider: DATABASE_PROVIDER,
@@ -42,4 +49,15 @@ export const databaseDesign = {
   }
 };
 
-export default databaseDesign;
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || "localhost",
+  user: process.env.DB_USER || "root",
+  password: process.env.DB_PASSWORD || "",
+  database: DATABASE_NAME,
+  port: Number(process.env.DB_PORT) || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+export default pool;
