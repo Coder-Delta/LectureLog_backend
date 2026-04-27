@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
-import legacyRoutes from "./routes/index.js";
 import studentRoutes from "./routes/student.routes.js";
 import sessionRoutes from "./routes/session.routes.js";
 import attendanceRoutes from "./routes/db-attendance.routes.js";
@@ -24,8 +23,6 @@ app.use(express.urlencoded({ extended: true }));
 app.get("/health", (_req, res) => {
   res.status(200).json({ success: true, message: "Server is healthy" });
 });
-
-app.use("/api/v1", legacyRoutes);
 
 app.use("/api/students", studentRoutes);
 app.use("/api/sessions", sessionRoutes);

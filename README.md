@@ -9,10 +9,11 @@ AI-Based Smart Attendance System Backend.
 - Real-time dashboard updates using WebSockets
 - Agent-based reporting and monitoring
 - Student recheck request system
+- PostgreSQL-backed API only, with legacy in-memory routes removed
 
 ## Tech Stack
 - Node.js & Express
-- MySQL (Data persistence)
+- PostgreSQL (Data persistence)
 - Pinecone (Vector search)
 - Socket.io (Real-time updates)
 - JWT (Authentication)
@@ -21,7 +22,7 @@ AI-Based Smart Attendance System Backend.
 
 ### Prerequisites
 - Node.js (v16+)
-- MySQL Server
+- PostgreSQL Server
 - Pinecone Account (optional but recommended for full features)
 
 ### Setup
@@ -39,6 +40,14 @@ AI-Based Smart Attendance System Backend.
    ```bash
    npm run start
    ```
+
+## Backend Structure
+- `src/controllers/`: request handlers for the Postgres-backed API
+- `src/routes/`: active Express routes for auth, students, sessions, attendance, recheck, recognition, schedules, and agent reports
+- `src/config/database.config.js`: PostgreSQL pool and startup connection check
+- `src/services/scheduler.service.js`: cron-driven automatic session lifecycle
+- `init-db.js`: idempotent schema bootstrap for PostgreSQL
+- `setup_test_data.js`: optional seed data for local testing
 
 ## API Endpoints
 
@@ -67,6 +76,29 @@ AI-Based Smart Attendance System Backend.
 - `GET /api/recheck` - List all recheck requests (teacher)
 - `PATCH /api/recheck/status` - Approve or reject a request
 
+### Schedule
+- `POST /api/schedule` - Create an automated class schedule
+- `GET /api/schedule` - List schedules
+- `GET /api/schedule/my` - List schedules for the logged-in teacher
+- `PUT /api/schedule/:id` - Update schedule timing
+
 ### Agent
 - `GET /api/agent/reports` - Get subject-wise attendance reports
 - `GET /api/agent/monitoring` - Detect students with low attendance patterns
+
+## Environment Variables
+```env
+PORT=5000
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your_password
+DB_NAME=lecturelog
+DB_SSL=false
+JWT_SECRET=replace_me
+AI_SERVICE_URL=http://localhost:8000
+PINECONE_API_KEY=replace_me
+PINECONE_ENVIRONMENT=replace_me
+PINECONE_INDEX=lecturelog-embeddings
+PINECONE_API_KEY_TWO=replace_me
+```

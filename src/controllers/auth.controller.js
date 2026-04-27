@@ -9,20 +9,15 @@ export const signup = async (req, res) => {
   const { name, email, password, role } = req.body;
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
-    
-    if (role === 'admin') {
-      const [result] = await pool.query(
-        'INSERT INTO admins (name, email, password) VALUES (?, ?, ?)',
-        [name, email, hashedPassword]
-      );
-      return res.status(201).json({ message: 'Admin created', userId: result.insertId });
-    }
 
-    const [result] = await pool.query(
-      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)',
+    const result = await pool.query(
+      'INSERT INTO users (name, email, password, role) VALUES ($1, $2, $3, $4) RETURNING id',
       [name, email, hashedPassword, role || 'teacher']
     );
-    res.status(201).json({ message: 'User created', userId: result.insertId });
+    res.status(201).json({
+      message: role === 'admin' ? 'Admin created' : 'User created',
+      userId: result.rows[0].id
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -31,7 +26,7 @@ export const signup = async (req, res) => {
 export const login = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    const { rows: users } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (users.length === 0) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
@@ -57,7 +52,10 @@ export const login = async (req, res) => {
 export const adminLogin = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const [admins] = await pool.query('SELECT * FROM admins WHERE email = ?', [email]);
+    const { rows: admins } = await pool.query(
+      'SELECT * FROM users WHERE email = $1 AND role = $2',
+      [email, 'admin']
+    );
     if (admins.length === 0) {
       return res.status(401).json({ message: 'Invalid Admin credentials' });
     }
@@ -83,8 +81,8 @@ export const adminLogin = async (req, res) => {
 export const studentLogin = async (req, res) => {
   const { roll_number, college_id } = req.body;
   try {
-    const [students] = await pool.query(
-      'SELECT * FROM students WHERE roll_number = ? AND college_id = ?', 
+    const { rows: students } = await pool.query(
+      'SELECT * FROM students WHERE roll_number = $1 AND college_id = $2', 
       [roll_number, college_id]
     );
 

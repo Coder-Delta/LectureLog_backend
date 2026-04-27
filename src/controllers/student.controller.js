@@ -30,12 +30,12 @@ export const registerStudent = async (req, res) => {
       throw new Error('AI Service failed to generate a valid face embedding.');
     }
 
-    // 2. Save to MySQL (Including the face vector as a JSON string)
-    const [result] = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, face_embedding) VALUES (?, ?, ?, ?, ?, ?)',
+    // 2. Save to PostgreSQL (Including the face vector as JSONB)
+    const result = await pool.query(
+      'INSERT INTO students (name, email, roll_number, college_id, year, face_embedding) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
       [name, email, roll_number, college_id, year, JSON.stringify(embedding)]
     );
-    const studentId = result.insertId;
+    const studentId = result.rows[0].id;
 
     // 3. Save photo permanently
     const studentImgDir = path.join('public', 'students');
@@ -60,7 +60,7 @@ export const registerStudent = async (req, res) => {
 
 export const getStudents = async (req, res) => {
   try {
-    const [students] = await pool.query('SELECT id, name, email, roll_number, college_id, year, face_embedding, created_at FROM students ORDER BY created_at DESC');
+    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, face_embedding, created_at FROM students ORDER BY created_at DESC');
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -70,12 +70,12 @@ export const getStudents = async (req, res) => {
 export const getMyAttendance = async (req, res) => {
   const studentId = req.user.id;
   try {
-    const [attendance] = await pool.query(`
+    const { rows: attendance } = await pool.query(`
       SELECT a.*, s.start_time, sub.name as subject_name
       FROM attendance a
       JOIN sessions s ON a.session_id = s.id
       JOIN subjects sub ON s.subject_id = sub.id
-      WHERE a.student_id = ?
+      WHERE a.student_id = $1
       ORDER BY s.start_time DESC
     `, [studentId]);
     res.json(attendance);
@@ -87,12 +87,12 @@ export const getMyAttendance = async (req, res) => {
 export const getMyStats = async (req, res) => {
   const studentId = req.user.id;
   try {
-    const [presentCount] = await pool.query(
-      'SELECT COUNT(*) as count FROM attendance WHERE student_id = ? AND status = "present"',
+    const { rows: presentCount } = await pool.query(
+      "SELECT COUNT(*)::int as count FROM attendance WHERE student_id = $1 AND status = 'present'",
       [studentId]
     );
-    const [totalCount] = await pool.query(
-      'SELECT COUNT(*) as count FROM attendance WHERE student_id = ?',
+    const { rows: totalCount } = await pool.query(
+      'SELECT COUNT(*)::int as count FROM attendance WHERE student_id = $1',
       [studentId]
     );
     res.json({
@@ -114,9 +114,9 @@ export const deleteStudent = async (req, res) => {
     }
 
     // 2. Delete from database
-    const [result] = await pool.query('DELETE FROM students WHERE id = ?', [id]);
+    const result = await pool.query('DELETE FROM students WHERE id = $1', [id]);
     
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Student not found' });
     }
 
