@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "start": "node init-db.js && node src/index.js"
   },
   "repository": {
     "type": "git",
@@ -27,7 +27,6 @@
   },
   "homepage": "https://github.com/Coder-Delta/LectureLog_backend#readme",
   "dependencies": {
-    "@pinecone-database/pinecone": "^7.2.0",
     "axios": "^1.15.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",

@@ -7,6 +7,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+/**
+ * Registers a new student in the system.
+ * 1. Takes the student's details and photo.
+ * 2. Sends the photo to the AI service to generate a face embedding (JSON vector).
+ * 3. Saves the student data and the AI embedding into PostgreSQL.
+ * 4. Saves the physical photo to the local file system.
+ */
 export const registerStudent = async (req, res) => {
   const { name, email, roll_number, college_id, year } = req.body;
   const imageFile = req.file;
@@ -58,6 +65,10 @@ export const registerStudent = async (req, res) => {
   }
 };
 
+/**
+ * Retrieves all registered students from the database.
+ * Used primarily for the admin dashboard.
+ */
 export const getStudents = async (req, res) => {
   try {
     const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, face_embedding, created_at FROM students ORDER BY created_at DESC');
@@ -67,6 +78,10 @@ export const getStudents = async (req, res) => {
   }
 };
 
+/**
+ * Retrieves the attendance history for the currently logged-in student.
+ * Joins the attendance, sessions, and subjects tables to provide a detailed view.
+ */
 export const getMyAttendance = async (req, res) => {
   const studentId = req.user.id;
   try {
@@ -84,6 +99,10 @@ export const getMyAttendance = async (req, res) => {
   }
 };
 
+/**
+ * Calculates basic statistics for the logged-in student.
+ * Returns the total number of sessions they were part of, and how many they attended.
+ */
 export const getMyStats = async (req, res) => {
   const studentId = req.user.id;
   try {
@@ -104,6 +123,10 @@ export const getMyStats = async (req, res) => {
   }
 };
 
+/**
+ * Deletes a student from the system.
+ * Removes both the database record and the physical image file from the server.
+ */
 export const deleteStudent = async (req, res) => {
   const { id } = req.params;
   try {
