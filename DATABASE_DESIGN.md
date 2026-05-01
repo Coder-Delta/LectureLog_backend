@@ -46,8 +46,9 @@ DB_SSL=false
 ### `sessions`
 
 - Stores started or completed lecture sessions
-- Important columns: `subject_id`, `classroom_id`, `teacher_id`, `start_time`, `end_time`, `status`
-- Status allowed: `active`, `ended`
+- Important columns: `subject_id`, `classroom_id`, `teacher_id`, `start_time`, `end_time`, `status`, `is_custom`, `year`, `stream`, `schedule_id`
+- Status allowed: `active`, `ended`, `cancelled`, `scheduled`
+- `schedule_id` links automated sessions to their originating schedule entry
 
 ### `attendance`
 

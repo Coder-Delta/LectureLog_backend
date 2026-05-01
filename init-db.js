@@ -14,9 +14,15 @@ const initDb = async () => {
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
         password VARCHAR(255) NOT NULL,
+        college_id VARCHAR(100),
         role VARCHAR(20) NOT NULL DEFAULT 'teacher' CHECK (role IN ('teacher', 'admin')),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+
+    // Ensure the college_id column exists if table was already created
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS college_id VARCHAR(100);
     `);
 
     await client.query(`
@@ -27,6 +33,7 @@ const initDb = async () => {
         roll_number VARCHAR(50) UNIQUE NOT NULL,
         college_id VARCHAR(100) NOT NULL,
         year INTEGER,
+        stream VARCHAR(50),
         face_embedding JSONB,
         status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -34,11 +41,22 @@ const initDb = async () => {
       )
     `);
 
+    // Ensure the stream column exists if the table was already created
+    await client.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS stream VARCHAR(50);
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS subjects (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE
+        name VARCHAR(255) NOT NULL UNIQUE,
+        code VARCHAR(50) UNIQUE
       )
+    `);
+
+    // Ensure the code column exists if the table was created previously without it
+    await client.query(`
+      ALTER TABLE subjects ADD COLUMN IF NOT EXISTS code VARCHAR(50) UNIQUE;
     `);
 
     await client.query(`
@@ -57,7 +75,7 @@ const initDb = async () => {
         teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         start_time TIMESTAMPTZ NOT NULL,
         end_time TIMESTAMPTZ NOT NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended'))
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'cancelled'))
       )
     `);
 
@@ -93,9 +111,74 @@ const initDb = async () => {
         start_time TIME NOT NULL,
         end_time TIME NOT NULL,
         year VARCHAR(1) NOT NULL DEFAULT '1' CHECK (year IN ('1', '2', '3', '4')),
+        stream VARCHAR(50) NOT NULL DEFAULT 'CSE',
         camera_id VARCHAR(50) NOT NULL DEFAULT '0'
       )
     `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cancelled_classes (
+        id SERIAL PRIMARY KEY,
+        schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+        cancel_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        UNIQUE (schedule_id, cancel_date)
+      )
+    `);
+
+    // Ensure the stream column exists in schedules if the table was already created
+    await client.query(`
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS stream VARCHAR(50) NOT NULL DEFAULT 'CSE';
+    `);
+
+    await client.query(`
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_custom BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+
+    await client.query(`
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS year INTEGER;
+    `);
+
+    await client.query(`
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS stream VARCHAR(50);
+    `);
+
+    await client.query(`
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS time_slots (
+        id SERIAL PRIMARY KEY,
+        start_time VARCHAR(20) NOT NULL,
+        end_time VARCHAR(20) NOT NULL,
+        raw_start VARCHAR(20) NOT NULL,
+        raw_end VARCHAR(20) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Check if time_slots has values, otherwise insert defaults
+    const slotCountRes = await client.query('SELECT COUNT(*) FROM time_slots');
+    if (parseInt(slotCountRes.rows[0].count) === 0) {
+      const defaultSlots = [
+        ['10:15 AM', '11:05 AM', '10:15:00', '11:05:00'],
+        ['11:05 AM', '11:55 AM', '11:05:00', '11:55:00'],
+        ['11:55 AM', '12:45 PM', '11:55:00', '12:45:00'],
+        ['12:45 PM', '01:35 PM', '12:45:00', '13:35:00'],
+        ['01:35 PM', '02:25 PM', '13:35:00', '14:25:00'],
+        ['02:25 PM', '03:15 PM', '14:25:00', '15:15:00'],
+        ['03:15 PM', '04:05 PM', '15:15:00', '16:05:00'],
+        ['04:05 PM', '04:55 PM', '16:05:00', '16:55:00'],
+        ['04:55 PM', '05:45 PM', '16:55:00', '17:45:00']
+      ];
+
+      for (const slot of defaultSlots) {
+        await client.query(
+          'INSERT INTO time_slots (start_time, end_time, raw_start, raw_end) VALUES ($1, $2, $3, $4)',
+          slot
+        );
+      }
+    }
 
     await client.query(`
       INSERT INTO subjects (name)

@@ -1,7 +1,8 @@
 import express from "express";
 import {
   getSessionAttendance,
-  markManualAttendance
+  markManualAttendance,
+  getStudentAttendance
 } from "../controllers/attendance.controller.js";
 import { authenticateToken, authorizeRole } from "../middleware/auth.middleware.js";
 
@@ -18,6 +19,12 @@ router.post(
   authenticateToken,
   authorizeRole("teacher", "admin"),
   markManualAttendance
+);
+router.get(
+  "/student/:id",
+  authenticateToken,
+  authorizeRole("teacher", "admin"),
+  getStudentAttendance
 );
 
 export default router;

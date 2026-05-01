@@ -15,7 +15,7 @@ dotenv.config();
  * 4. Saves the physical photo to the local file system.
  */
 export const registerStudent = async (req, res) => {
-  const { name, email, roll_number, college_id, year } = req.body;
+  const { name, email, roll_number, college_id, year, stream } = req.body;
   const imageFile = req.file;
 
   if (!imageFile) {
@@ -39,8 +39,8 @@ export const registerStudent = async (req, res) => {
 
     // 2. Save to PostgreSQL (Including the face vector as JSONB)
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, face_embedding) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [name, email, roll_number, college_id, year, JSON.stringify(embedding)]
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [name, email, roll_number, college_id, year, stream, JSON.stringify(embedding)]
     );
     const studentId = result.rows[0].id;
 
@@ -71,7 +71,7 @@ export const registerStudent = async (req, res) => {
  */
 export const getStudents = async (req, res) => {
   try {
-    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, face_embedding, created_at FROM students ORDER BY created_at DESC');
+    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, created_at FROM students ORDER BY created_at DESC');
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -138,12 +138,55 @@ export const deleteStudent = async (req, res) => {
 
     // 2. Delete from database
     const result = await pool.query('DELETE FROM students WHERE id = $1', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Student not found' });
     }
 
     res.json({ message: 'Student deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * Updates a student's basic details (name, email, roll_number, college_id, year).
+ * Does not update the photo/embedding.
+ */
+export const updateStudent = async (req, res) => {
+  const { id } = req.params;
+  const { name, email, roll_number, college_id, year, stream } = req.body;
+
+  try {
+    const result = await pool.query(
+      'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6 WHERE id = $7 RETURNING id',
+      [name, email, roll_number, college_id, year, stream, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    res.json({ message: 'Student updated successfully' });
+  } catch (err) {
+    console.error('Update Error:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+/**
+ * Retrieves the profile details for the currently logged-in student.
+ */
+export const getMyProfile = async (req, res) => {
+  const studentId = req.user.id;
+  try {
+    const { rows: students } = await pool.query(
+      'SELECT id, name, email, roll_number, college_id, year, stream FROM students WHERE id = $1',
+      [studentId]
+    );
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+    res.json(students[0]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

@@ -8,6 +8,30 @@ dotenv.config();
 export const signup = async (req, res) => {
   const { name, email, password, role } = req.body;
   try {
+    if (role === 'teacher') {
+      const { rows: preRegistered } = await pool.query(
+        "SELECT * FROM users WHERE email = $1 AND role = 'teacher'",
+        [email]
+      );
+      
+      if (preRegistered.length === 0) {
+        return res.status(403).json({ 
+          message: 'Public teacher signup is disabled. Only pre-registered teachers can sign up. Please contact your administrator.' 
+        });
+      }
+
+      // Pre-registered teacher found, update their password and activation
+      const hashedPassword = await bcrypt.hash(password, 10);
+      await pool.query(
+        'UPDATE users SET name = $1, password = $2 WHERE email = $3',
+        [name, hashedPassword, email]
+      );
+      
+      return res.status(200).json({
+        message: 'Teacher account activated successfully!'
+      });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
@@ -103,6 +127,8 @@ export const studentLogin = async (req, res) => {
         id: student.id, 
         name: student.name, 
         roll_number: student.roll_number, 
+        year: student.year,
+        stream: student.stream,
         role: 'student' 
       } 
     });

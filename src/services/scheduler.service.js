@@ -10,49 +10,89 @@ export const initScheduler = (app) => {
     const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00
 
     try {
-      // Find schedules for this time
+      // Find schedules for this time - using explicit time cast
       const { rows: schedules } = await pool.query(`
-        SELECT * FROM schedules 
-        WHERE day_of_week = $1 AND start_time = $2
+        SELECT s.*, sub.name as subject_name 
+        FROM schedules s
+        JOIN subjects sub ON s.subject_id = sub.id
+        WHERE s.day_of_week = $1 
+          AND s.start_time <= $2::time 
+          AND s.end_time >= $2::time
       `, [currentDay, currentTime]);
 
+      if (schedules.length > 0) {
+        console.log(`[Scheduler] Found ${schedules.length} scheduled classes for ${currentDay} ${currentTime}`);
+      }
+
+      // 1. Start automated sessions from routine
       for (const schedule of schedules) {
-        // Check if session already exists for today/subject
+        // Check if session already exists for this specific schedule slot today
         const { rows: existing } = await pool.query(`
           SELECT * FROM sessions 
-          WHERE subject_id = $1 AND classroom_id = $2 AND start_time::date = CURRENT_DATE
-        `, [schedule.subject_id, schedule.classroom_id]);
+          WHERE (schedule_id = $1 OR (subject_id = $2 AND year = $3 AND stream = $4 AND status = 'active'))
+            AND start_time::date = CURRENT_DATE
+            AND status != 'cancelled'
+        `, [schedule.id, schedule.subject_id, schedule.year, schedule.stream]);
 
         if (existing.length === 0) {
-          console.log(`[Scheduler] Starting automated session for Subject ${schedule.subject_id}`);
+          console.log(`[Scheduler] Starting automated session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
           
-          const startDate = new Date();
-          const [h, m, s] = String(schedule.end_time).split(':');
+          const startDate = new Date(); // Start at current actual time
+          
+          // Determine end date from schedule time
+          const [h, m, s_part] = String(schedule.end_time).split(':');
           const endDate = new Date();
-          endDate.setHours(h, m, s);
+          endDate.setHours(parseInt(h), parseInt(m), parseInt(s_part) || 0);
 
           const result = await pool.query(
-            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startDate, endDate, 'active']
+            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startDate, endDate, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id]
           );
 
-          // Notify frontend
+          const sessionId = result.rows[0].id;
+          console.log(`[Scheduler] Session created successfully with ID: ${sessionId}`);
+
+          // Notify frontend with full details
           const io = app.get('io');
           if (io) {
             io.emit('session_started', {
-              id: result.rows[0].id,
+              id: sessionId,
               subject_id: schedule.subject_id,
-              classroom_id: schedule.classroom_id
+              subject_name: schedule.subject_name,
+              classroom_id: schedule.classroom_id,
+              teacher_id: schedule.teacher_id,
+              year: schedule.year,
+              stream: schedule.stream,
+              status: 'active'
             });
           }
         }
       }
 
-      // Check for sessions that should end
-      await pool.query(`
-        UPDATE sessions SET status = 'ended' 
-        WHERE status = 'active' AND end_time <= $1
+      // 2. Activate manually 'scheduled' sessions whose time has arrived
+      const { rows: toActivate } = await pool.query(`
+        UPDATE sessions SET status = 'active'
+        WHERE status = 'scheduled' AND start_time <= $1 AND end_time > $1
+        RETURNING id, subject_id
       `, [now]);
+
+      if (toActivate.length > 0) {
+        const io = app.get('io');
+        toActivate.forEach(s => {
+          console.log(`[Scheduler] Activating manually scheduled session ${s.id}`);
+          if (io) io.emit('session_started', { id: s.id, subject_id: s.subject_id });
+        });
+      }
+
+      // 3. End sessions that have reached their end_time
+      const { rowCount: endedCount } = await pool.query(`
+        UPDATE sessions SET status = 'ended' 
+        WHERE status IN ('active', 'scheduled') AND end_time <= $1
+      `, [now]);
+
+      if (endedCount > 0) {
+        console.log(`[Scheduler] Automatically ended ${endedCount} expired sessions.`);
+      }
 
     } catch (err) {
       console.error('[Scheduler Error]:', err);

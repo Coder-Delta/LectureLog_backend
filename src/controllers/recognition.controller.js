@@ -6,11 +6,23 @@ export const processRecognition = async (req, res) => {
   try {
     let sessionId = session_id;
 
-    // 1. If session_id is 'active', find the first currently running session
+    // 1. If session_id is 'active', find the session matching the student's year and stream
     if (session_id === 'active') {
-      const { rows: activeSessions } = await pool.query('SELECT id FROM sessions WHERE status = $1 LIMIT 1', ['active']);
+      // Get student details first
+      const { rows: student } = await pool.query('SELECT year, stream FROM students WHERE id = $1', [student_id]);
+      if (student.length === 0) {
+        return res.status(404).json({ message: 'Student not found' });
+      }
+
+      const { year, stream } = student[0];
+
+      const { rows: activeSessions } = await pool.query(
+        'SELECT id FROM sessions WHERE status = $1 AND year = $2 AND stream = $3', 
+        ['active', year, stream]
+      );
+
       if (activeSessions.length === 0) {
-        return res.status(400).json({ message: 'No active session found' });
+        return res.status(400).json({ message: 'No active session found for this student group' });
       }
       sessionId = activeSessions[0].id;
     } else {
@@ -41,6 +53,22 @@ export const processRecognition = async (req, res) => {
     });
 
     res.status(201).json({ message: 'Attendance marked successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const getSessionAttendance = async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    const { rows: attendance } = await pool.query(`
+      SELECT a.*, s.name as student_name, s.roll_number, s.year, s.stream
+      FROM attendance a
+      JOIN students s ON a.student_id = s.id
+      WHERE a.session_id = $1
+      ORDER BY a.marked_at DESC
+    `, [sessionId]);
+    res.json(attendance);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

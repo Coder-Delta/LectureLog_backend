@@ -14,6 +14,10 @@ import agentRoutes from "./routes/agent.routes.js";
 import recognitionRoutes from "./routes/db-recognition.routes.js";
 import authRoutes from "./routes/db-auth.routes.js";
 import scheduleRoutes from "./routes/schedule.routes.js";
+import subjectRoutes from "./routes/subject.routes.js";
+import teacherRoutes from "./routes/teacher.routes.js";
+import classroomRoutes from "./routes/classroom.routes.js";
+import timeSlotsRoutes from "./routes/time-slots.routes.js";
 import { apiErrorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 // Setup directory paths for ES Modules
@@ -46,7 +50,11 @@ app.use("/api/recheck", recheckRoutes);
 app.use("/api/agents", agentRoutes);
 app.use("/api/recognition", recognitionRoutes);
 app.use("/api/auth", authRoutes);
-app.use("/api/schedule", scheduleRoutes);
+app.use("/api/schedules", scheduleRoutes);
+app.use("/api/subjects", subjectRoutes);
+app.use("/api/teachers", teacherRoutes);
+app.use("/api/classrooms", classroomRoutes);
+app.use("/api/time_slots", timeSlotsRoutes);
 
 // --- ERROR HANDLING ---
 // These must be at the very end to catch unresolved routes or crashes
