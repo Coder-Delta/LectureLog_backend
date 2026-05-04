@@ -4,10 +4,11 @@ export const getSessionAttendance = async (req, res) => {
   const { id } = req.params;
   try {
     const { rows: attendance } = await pool.query(`
-      SELECT a.*, s.name as student_name, s.email
+      SELECT a.*, s.name as student_name, s.email, s.roll_number
       FROM attendance a
       JOIN students s ON a.student_id = s.id
       WHERE a.session_id = $1
+      ORDER BY a.marked_at DESC
     `, [id]);
     res.json(attendance);
   } catch (err) {
