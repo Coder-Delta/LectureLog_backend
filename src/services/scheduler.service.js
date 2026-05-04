@@ -45,8 +45,8 @@ export const initScheduler = (app) => {
           endDate.setHours(parseInt(h), parseInt(m), parseInt(s_part) || 0);
 
           const result = await pool.query(
-            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startDate, endDate, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id]
+            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startDate, endDate, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id, false]
           );
 
           const sessionId = result.rows[0].id;
@@ -84,14 +84,25 @@ export const initScheduler = (app) => {
         });
       }
 
-      // 3. End sessions that have reached their end_time
-      const { rowCount: endedCount } = await pool.query(`
+      // 3. End sessions that have reached their end_time (Robust Clock Comparison)
+      const { rows: endingSessions } = await pool.query(`
         UPDATE sessions SET status = 'ended' 
-        WHERE status IN ('active', 'scheduled') AND end_time <= $1
-      `, [now]);
+        WHERE status IN ('active', 'scheduled') 
+          AND (
+            end_time <= $1 -- Absolute system time
+            OR (TO_CHAR(end_time, 'HH24:MI:SS') <= $2) -- Wall clock time
+          )
+        RETURNING id
+      `, [now, now.toTimeString().split(' ')[0]]);
 
-      if (endedCount > 0) {
-        console.log(`[Scheduler] Automatically ended ${endedCount} expired sessions.`);
+      if (endingSessions.length > 0) {
+        const io = app.get('io');
+        console.log(`[Scheduler] Smart Cleanup: Ended ${endingSessions.length} expired sessions.`);
+        if (io) {
+          endingSessions.forEach(sess => {
+            io.emit('session_ended', { id: sess.id });
+          });
+        }
       }
 
     } catch (err) {

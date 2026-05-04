@@ -24,15 +24,12 @@ export const addClassroom = async (req, res) => {
 
   try {
     // Validate camera uniqueness: each camera can only be assigned to one classroom
-    const cameraIds = camera_url.split(',').map(c => c.trim()).filter(Boolean);
-    for (const camId of cameraIds) {
-      const { rows: existing } = await pool.query(
-        "SELECT id, name FROM classrooms WHERE camera_url LIKE '%' || $1 || '%'",
-        [camId]
-      );
-      if (existing.length > 0) {
-        return res.status(400).json({ message: `Camera '${camId}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
-      }
+    const { rows: existing } = await pool.query(
+      "SELECT id, name FROM classrooms WHERE camera_url = $1",
+      [camera_url]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
     }
 
     const result = await pool.query(
@@ -62,15 +59,12 @@ export const updateClassroom = async (req, res) => {
 
   try {
     // Validate camera uniqueness: each camera can only be assigned to one classroom (exclude self)
-    const cameraIds = camera_url.split(',').map(c => c.trim()).filter(Boolean);
-    for (const camId of cameraIds) {
-      const { rows: existing } = await pool.query(
-        "SELECT id, name FROM classrooms WHERE camera_url LIKE '%' || $1 || '%' AND id != $2",
-        [camId, id]
-      );
-      if (existing.length > 0) {
-        return res.status(400).json({ message: `Camera '${camId}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
-      }
+    const { rows: existing } = await pool.query(
+      "SELECT id, name FROM classrooms WHERE camera_url = $1 AND id != $2",
+      [camera_url, id]
+    );
+    if (existing.length > 0) {
+      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
     }
 
     const result = await pool.query(

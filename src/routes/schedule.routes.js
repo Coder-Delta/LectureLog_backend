@@ -4,7 +4,7 @@ import { authenticateToken, authorizeRole } from '../middleware/auth.middleware.
 
 const router = express.Router();
 
-router.get('/', authenticateToken, authorizeRole('teacher', 'admin', 'student'), getSchedules);
+router.get('/', authenticateToken, getSchedules);
 router.get('/my', authenticateToken, authorizeRole('teacher'), getMySchedules);
 router.post('/', authenticateToken, authorizeRole('admin'), createSchedule);
 router.put('/:id', authenticateToken, authorizeRole('admin'), updateSchedule);

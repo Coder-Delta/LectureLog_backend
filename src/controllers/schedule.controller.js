@@ -26,12 +26,12 @@ export const createSchedule = async (req, res) => {
       });
     }
 
-    // 2. Check for collisions in Custom Sessions (Active/Scheduled)
+    // 2. Check for collisions in Active Sessions only
     const { rows: sessionCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
-      AND s.status IN ('active', 'scheduled')
+      AND s.status = 'active'
       AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
       AND s.start_time::time <= $6::time AND s.end_time::time > $6::time
     `, [classroom_id, final_teacher_id, year || '1', stream || 'CSE', day_of_week, start_time]);
@@ -39,11 +39,11 @@ export const createSchedule = async (req, res) => {
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
       let reason = 'Student Group';
-      if (collision.classroom_id === parseInt(classroom_id)) reason = 'Classroom';
-      if (collision.teacher_id === parseInt(final_teacher_id)) reason = 'Teacher';
+      if (collision.classroom_id === parseInt(classroom_id)) reason = `Classroom (${collision.classroom_id})`;
+      if (collision.teacher_id === parseInt(final_teacher_id)) reason = `Teacher (${collision.teacher_id})`;
 
       return res.status(400).json({ 
-        message: `Collision! ${reason} is already occupied by a Custom Session (${collision.subject_name} - Year ${collision.year || 'N/A'} ${collision.stream || 'N/A'}) during this time.` 
+        message: `Conflict! ${reason} is currently in an active session (${collision.subject_name}). Please end that session before assigning a new routine.` 
       });
     }
 
@@ -142,24 +142,24 @@ export const updateSchedule = async (req, res) => {
       });
     }
 
-    // 3. Check for collisions in Custom Sessions (Active/Scheduled)
+    // 3. Check for collisions in Active Sessions only
     const { rows: sessionCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
-      WHERE (s.classroom_id = $1 OR s.teacher_id = $2)
-      AND s.status IN ('active', 'scheduled')
-      AND TRIM(TO_CHAR(s.start_time, 'Day')) = $3
-      AND s.start_time::time <= $4::time AND s.end_time::time > $4::time
-    `, [classroom_id, teacher_id, day_of_week, start_time]);
+      WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
+      AND s.status = 'active'
+      AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
+      AND s.start_time::time <= $6::time AND s.end_time::time > $6::time
+    `, [classroom_id, teacher_id, original[0].year, original[0].stream, day_of_week, start_time]);
 
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
       let reason = 'Student Group';
-      if (collision.classroom_id === parseInt(classroom_id)) reason = 'Classroom';
-      if (collision.teacher_id === parseInt(teacher_id)) reason = 'Teacher';
+      if (collision.classroom_id === parseInt(classroom_id)) reason = `Classroom (${collision.classroom_id})`;
+      if (collision.teacher_id === parseInt(teacher_id)) reason = `Teacher (${collision.teacher_id})`;
 
       return res.status(400).json({ 
-        message: `Collision! ${reason} is already occupied by a Custom Session (${collision.subject_name} - Year ${collision.year || 'N/A'} ${collision.stream || 'N/A'}) during this time.` 
+        message: `Conflict! ${reason} is currently in an active session (${collision.subject_name}). Please end that session before assigning a new routine.` 
       });
     }
 

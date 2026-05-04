@@ -97,13 +97,48 @@ export const startSession = async (req, res) => {
 
 export const endSession = async (req, res) => {
   const { id } = req.body;
+  if (!id) return res.status(400).json({ message: 'Session ID is required' });
+
   try {
-    await pool.query('UPDATE sessions SET status = $1 WHERE id = $2', ['ended', id]);
+    console.log(`[HardDelete] Physically removing session ID: ${id}`);
+    
+    // 1. Hard delete from database
+    const result = await pool.query('DELETE FROM sessions WHERE id = $1 RETURNING id', [id]);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'Session not found' });
+    }
+
+    // 2. Immediate Broadcast to Dashboard
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('session_ended', { id });
+    }
+
+    res.json({ message: 'Session deleted from database', id });
+  } catch (err) {
+    console.error('[HardDelete Error]:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const endBySchedule = async (req, res) => {
+  const { schedule_id } = req.body;
+  try {
+    console.log(`[DeepDelete] Physically removing all sessions for schedule: ${schedule_id}`);
+    
+    // Hard delete any active sessions for this schedule
+    const { rows: deleted } = await pool.query(
+      "DELETE FROM sessions WHERE schedule_id = $1 RETURNING id",
+      [schedule_id]
+    );
 
     const io = req.app.get('io');
-    io.emit('session_ended', { id });
+    if (io && deleted.length > 0) {
+      deleted.forEach(s => io.emit('session_ended', { id: s.id }));
+    }
 
-    res.json({ message: 'Session ended' });
+    res.json({ message: 'Sessions physically deleted', count: deleted.length });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -134,7 +169,77 @@ export const cancelSession = async (req, res) => {
 
 export const getSessions = async (req, res) => {
   const { year, stream } = req.query;
+  const io = req.app.get('io');
+  
   try {
+    // ── STEP 1: Auto-Start/End Maintenance ──
+    const now = new Date();
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDay = days[now.getDay()];
+    const currentTimeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
+    const currentDateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+
+    // 1. Mark past-due active sessions as ended and notify frontend
+    // We use a robust time-string comparison to avoid timezone "Ghost Sessions"
+    const { rows: endingSessions } = await pool.query(`
+      UPDATE sessions 
+      SET status = 'ended' 
+      WHERE status = 'active' 
+        AND (
+          end_time <= $1 -- Absolute time check
+          OR (is_custom = false AND (TO_CHAR(end_time, 'HH24:MI:SS') < $2)) -- Routine time check
+        )
+      RETURNING id
+    `, [now, currentTimeStr]);
+
+    if (io && endingSessions.length > 0) {
+      endingSessions.forEach(sess => {
+        io.emit('session_ended', { id: sess.id });
+        console.log(`[AUTO-END] Session ${sess.id} cleaned up.`);
+      });
+    }
+
+    // 2. Check routine for current sessions
+    const { rows: currentRoutine } = await pool.query(`
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name 
+      FROM schedules s
+      JOIN subjects sub ON s.subject_id = sub.id
+      JOIN classrooms c ON s.classroom_id = c.id
+      WHERE s.day_of_week = $1 
+        AND s.start_time <= $2::time 
+        AND s.end_time > $2::time
+    `, [currentDay, currentTimeStr]);
+
+    for (const routine of currentRoutine) {
+      // Check if this routine session is already 'active' in the sessions table for today
+      const { rows: existing } = await pool.query(`
+        SELECT id FROM sessions 
+        WHERE subject_id = $1 AND classroom_id = $2 
+          AND start_time::date = CURRENT_DATE 
+          AND (start_time::time)::text LIKE $3 || '%'
+          AND status = 'active'
+      `, [routine.subject_id, routine.classroom_id, routine.start_time]);
+
+      if (existing.length === 0) {
+        // AUTO-START: Create the active session record using pure SQL date math
+        const { rows: inserted } = await pool.query(`
+          INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
+          VALUES ($1, $2, $3, (CURRENT_DATE + $4::time), (CURRENT_DATE + $5::time), 'active', $6, $7, false)
+          RETURNING *
+        `, [routine.subject_id, routine.classroom_id, routine.teacher_id, routine.start_time, routine.end_time, routine.year, routine.stream]);
+        
+        if (io) {
+          io.emit('session_started', { 
+            ...inserted[0], 
+            subject_name: routine.subject_name,
+            classroom_name: routine.classroom_name 
+          });
+          console.log(`[AUTO-START] Activated routine session: ${routine.subject_name}`);
+        }
+      }
+    }
+
+    // ── STEP 2: Fetch and Return All Sessions ──
     let query = `
       SELECT s.*, sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
@@ -160,9 +265,26 @@ export const getSessions = async (req, res) => {
 
     query += ` ORDER BY s.start_time DESC`;
 
-    const { rows: sessions } = await pool.query(query, params);
+    const { rows: rawSessions } = await pool.query(query, params);
+    
+    // ── STEP 3: JavaScript Level Auditor (Final Guard) ──
+    // Even if SQL maintenance missed it, we audit here before returning
+    const sessions = await Promise.all(rawSessions.map(async (s) => {
+      if (s.status === 'active') {
+        const sessionEnd = new Date(s.end_time);
+        if (now > sessionEnd) {
+          // Force end in DB
+          await pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]);
+          if (io) io.emit('session_ended', { id: s.id });
+          return { ...s, status: 'ended' };
+        }
+      }
+      return s;
+    }));
+
     res.json(sessions);
   } catch (err) {
+    console.error('[getSessions Maintenance Error]:', err.message);
     res.status(500).json({ message: err.message });
   }
 };
