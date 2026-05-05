@@ -101,10 +101,10 @@ export const endSession = async (req, res) => {
 
   try {
     console.log(`[HardDelete] Physically removing session ID: ${id}`);
-    
+
     // 1. Hard delete from database
     const result = await pool.query('DELETE FROM sessions WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Session not found' });
     }
@@ -126,7 +126,7 @@ export const endBySchedule = async (req, res) => {
   const { schedule_id } = req.body;
   try {
     console.log(`[DeepDelete] Physically removing all sessions for schedule: ${schedule_id}`);
-    
+
     // Hard delete any active sessions for this schedule
     const { rows: deleted } = await pool.query(
       "DELETE FROM sessions WHERE schedule_id = $1 RETURNING id",
@@ -170,7 +170,7 @@ export const cancelSession = async (req, res) => {
 export const getSessions = async (req, res) => {
   const { year, stream } = req.query;
   const io = req.app.get('io');
-  
+
   try {
     // ── STEP 1: Auto-Start/End Maintenance ──
     const now = new Date();
@@ -227,12 +227,12 @@ export const getSessions = async (req, res) => {
           VALUES ($1, $2, $3, (CURRENT_DATE + $4::time), (CURRENT_DATE + $5::time), 'active', $6, $7, false)
           RETURNING *
         `, [routine.subject_id, routine.classroom_id, routine.teacher_id, routine.start_time, routine.end_time, routine.year, routine.stream]);
-        
+
         if (io) {
-          io.emit('session_started', { 
-            ...inserted[0], 
+          io.emit('session_started', {
+            ...inserted[0],
             subject_name: routine.subject_name,
-            classroom_name: routine.classroom_name 
+            classroom_name: routine.classroom_name
           });
           console.log(`[AUTO-START] Activated routine session: ${routine.subject_name}`);
         }
@@ -266,7 +266,7 @@ export const getSessions = async (req, res) => {
     query += ` ORDER BY s.start_time DESC`;
 
     const { rows: rawSessions } = await pool.query(query, params);
-    
+
     // ── STEP 3: JavaScript Level Auditor (Final Guard) ──
     // Even if SQL maintenance missed it, we audit here before returning
     const sessions = await Promise.all(rawSessions.map(async (s) => {

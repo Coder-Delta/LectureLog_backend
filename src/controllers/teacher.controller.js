@@ -2,6 +2,7 @@ import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
+import cloudinary from '../config/cloudinary.config.js';
 
 /**
  * Register a new teacher
@@ -23,27 +24,24 @@ export const registerTeacher = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(college_id, salt);
 
-    // Save to PostgreSQL
+    // 1. Upload to Cloudinary
+    const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
+      folder: 'lecturelog/teachers',
+    });
+
+    // 2. Save to PostgreSQL
     const result = await pool.query(
-      'INSERT INTO users (name, email, password, role, college_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [name, email, hashedPassword, 'teacher', college_id]
+      'INSERT INTO users (name, email, password, role, college_id, image_url, cloudinary_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [name, email, hashedPassword, 'teacher', college_id, cloudinaryResponse.secure_url, cloudinaryResponse.public_id]
     );
     const teacherId = result.rows[0].id;
-
-    // Save photo permanently
-    const teacherImgDir = path.join('public', 'teachers');
-    if (!fs.existsSync(teacherImgDir)) {
-      fs.mkdirSync(teacherImgDir, { recursive: true });
-    }
-    const finalPath = path.join(teacherImgDir, `${teacherId}.jpg`);
-    fs.copyFileSync(imageFile.path, finalPath);
 
     // Clean up temp file
     if (fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
 
-    res.status(201).json({ message: 'Teacher registered successfully', teacherId });
+    res.status(201).json({ message: 'Teacher registered successfully', teacherId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {
     console.error('Registration Error:', err);
     if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
@@ -61,7 +59,7 @@ export const registerTeacher = async (req, res) => {
 export const getTeachers = async (req, res) => {
   try {
     const { rows: teachers } = await pool.query(
-      "SELECT id, name, email, college_id, created_at FROM users WHERE role = 'teacher' ORDER BY created_at DESC"
+      "SELECT id, name, email, college_id, image_url, created_at FROM users WHERE role = 'teacher' ORDER BY created_at DESC"
     );
     res.json(teachers);
   } catch (err) {
@@ -76,10 +74,13 @@ export const getTeachers = async (req, res) => {
 export const deleteTeacher = async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Delete photo if exists
-    const photoPath = path.join('public', 'teachers', `${id}.jpg`);
-    if (fs.existsSync(photoPath)) {
-      fs.unlinkSync(photoPath);
+    // 1. Get Cloudinary ID
+    const teacherResult = await pool.query("SELECT cloudinary_id FROM users WHERE id = $1 AND role = 'teacher'", [id]);
+    if (teacherResult.rowCount > 0) {
+      const { cloudinary_id } = teacherResult.rows[0];
+      if (cloudinary_id) {
+        await cloudinary.uploader.destroy(cloudinary_id);
+      }
     }
 
     // 2. Delete from database
@@ -103,7 +104,7 @@ export const getMyProfile = async (req, res) => {
   const teacherId = req.user.id;
   try {
     const { rows: teachers } = await pool.query(
-      'SELECT id, name, email, college_id, role FROM users WHERE id = $1',
+      'SELECT id, name, email, college_id, role, image_url FROM users WHERE id = $1',
       [teacherId]
     );
     if (teachers.length === 0) {

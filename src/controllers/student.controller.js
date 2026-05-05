@@ -4,6 +4,7 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import cloudinary from '../config/cloudinary.config.js';
 
 dotenv.config();
 
@@ -37,27 +38,34 @@ export const registerStudent = async (req, res) => {
       throw new Error('AI Service failed to generate a valid face embedding.');
     }
 
-    // 2. Save to PostgreSQL (Including the face vector as JSONB)
+    // 2. Upload to Cloudinary
+    const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
+      folder: 'lecturelog/students',
+    });
+
+    // 3. Save to PostgreSQL (Including the face vector and Cloudinary info)
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
-      [name, email, roll_number, college_id, year, stream, JSON.stringify(embedding)]
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, image_url, cloudinary_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+      [
+        name,
+        email,
+        roll_number,
+        college_id,
+        year,
+        stream,
+        JSON.stringify(embedding),
+        cloudinaryResponse.secure_url,
+        cloudinaryResponse.public_id
+      ]
     );
     const studentId = result.rows[0].id;
-
-    // 3. Save photo permanently
-    const studentImgDir = path.join('public', 'students');
-    if (!fs.existsSync(studentImgDir)) {
-      fs.mkdirSync(studentImgDir, { recursive: true });
-    }
-    const finalPath = path.join(studentImgDir, `${studentId}.jpg`);
-    fs.copyFileSync(imageFile.path, finalPath);
 
     // Clean up temp file
     if (fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
 
-    res.status(201).json({ message: 'Student registered successfully', studentId });
+    res.status(201).json({ message: 'Student registered successfully', studentId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {
     console.error('Registration Error:', err);
     if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
@@ -71,7 +79,7 @@ export const registerStudent = async (req, res) => {
  */
 export const getStudents = async (req, res) => {
   try {
-    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, created_at FROM students ORDER BY created_at DESC');
+    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, image_url, created_at FROM students ORDER BY created_at DESC');
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -130,10 +138,15 @@ export const getMyStats = async (req, res) => {
 export const deleteStudent = async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Delete photo if exists
-    const photoPath = path.join('public', 'students', `${id}.jpg`);
-    if (fs.existsSync(photoPath)) {
-      fs.unlinkSync(photoPath);
+    // 1. Get Cloudinary ID from DB
+    const studentResult = await pool.query('SELECT cloudinary_id FROM students WHERE id = $1', [id]);
+    
+    if (studentResult.rowCount > 0) {
+      const { cloudinary_id } = studentResult.rows[0];
+      if (cloudinary_id) {
+        // Delete from Cloudinary
+        await cloudinary.uploader.destroy(cloudinary_id);
+      }
     }
 
     // 2. Delete from database
@@ -180,7 +193,7 @@ export const getMyProfile = async (req, res) => {
   const studentId = req.user.id;
   try {
     const { rows: students } = await pool.query(
-      'SELECT id, name, email, roll_number, college_id, year, stream FROM students WHERE id = $1',
+      'SELECT id, name, email, roll_number, college_id, year, stream, image_url FROM students WHERE id = $1',
       [studentId]
     );
     if (students.length === 0) {

@@ -20,9 +20,17 @@ const initDb = async () => {
       )
     `);
 
-    // Ensure the college_id column exists if table was already created
+    // Ensure columns exist if table was already created
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS college_id VARCHAR(100);
+    `);
+
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS image_url TEXT;
+    `);
+
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
     `);
 
     await client.query(`
@@ -44,6 +52,14 @@ const initDb = async () => {
     // Ensure the stream column exists if the table was already created
     await client.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS stream VARCHAR(50);
+    `);
+
+    await client.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS image_url TEXT;
+    `);
+
+    await client.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
     `);
 
     await client.query(`

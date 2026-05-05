@@ -48,17 +48,25 @@ export const signup = async (req, res) => {
 };
 
 export const login = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, role } = req.body;
   try {
     const { rows: users } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (users.length === 0) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const user = users[0];
+
+    // STRICT ROLE CHECK: Only allow login if the role matches (e.g. Teacher login must have role 'teacher')
+    if (role && user.role !== role) {
+      return res.status(401).json({ 
+        message: `Unauthorized: This account is not registered as a ${role.charAt(0).toUpperCase() + role.slice(1)}.` 
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
 
     const token = jwt.sign(

@@ -36,9 +36,9 @@ export const initScheduler = (app) => {
 
         if (existing.length === 0) {
           console.log(`[Scheduler] Starting automated session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
-          
+
           const startDate = new Date(); // Start at current actual time
-          
+
           // Determine end date from schedule time
           const [h, m, s_part] = String(schedule.end_time).split(':');
           const endDate = new Date();
@@ -84,25 +84,31 @@ export const initScheduler = (app) => {
         });
       }
 
-      // 3. End sessions that have reached their end_time (Robust Clock Comparison)
+      // 3. End sessions that have reached their end_time (Date-Aware Physical Deletion)
       const { rows: endingSessions } = await pool.query(`
-        UPDATE sessions SET status = 'ended' 
+        SELECT id FROM sessions 
         WHERE status IN ('active', 'scheduled') 
           AND (
-            end_time <= $1 -- Absolute system time
-            OR (TO_CHAR(end_time, 'HH24:MI:SS') <= $2) -- Wall clock time
+            end_time <= $1 -- Past its end time today
+            OR start_time::date < CURRENT_DATE -- Started on a previous day (Stale/Zombie session)
           )
-        RETURNING id
-      `, [now, now.toTimeString().split(' ')[0]]);
+      `, [now]);
 
       if (endingSessions.length > 0) {
         const io = app.get('io');
-        console.log(`[Scheduler] Smart Cleanup: Ended ${endingSessions.length} expired sessions.`);
+        const sessionIds = endingSessions.map(s => s.id);
+
+        console.log(`[Scheduler] Cleaning up ${sessionIds.length} expired sessions.`);
+
+        // 1. Notify frontend first
         if (io) {
-          endingSessions.forEach(sess => {
-            io.emit('session_ended', { id: sess.id });
+          sessionIds.forEach(id => {
+            io.emit('session_ended', { id });
           });
         }
+
+        // 2. Physical Wipe from Database
+        await pool.query('DELETE FROM sessions WHERE id = ANY($1)', [sessionIds]);
       }
 
     } catch (err) {
