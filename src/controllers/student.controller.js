@@ -169,20 +169,60 @@ export const deleteStudent = async (req, res) => {
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
   const { name, email, roll_number, college_id, year, stream } = req.body;
+  const imageFile = req.file;
 
   try {
-    const result = await pool.query(
-      'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6 WHERE id = $7 RETURNING id',
-      [name, email, roll_number, college_id, year, stream, id]
-    );
+    let updateQuery = 'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6';
+    let queryParams = [name, email, roll_number, college_id, year, stream];
+    
+    if (imageFile) {
+      // 1. Get new embedding from AI Service
+      const aiFormData = new FormData();
+      aiFormData.append('file', fs.createReadStream(imageFile.path));
+
+      const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+        headers: aiFormData.getHeaders(),
+      });
+
+      const embedding = aiResponse.data.embedding;
+      if (!embedding || !Array.isArray(embedding)) {
+        throw new Error('AI Service failed to generate a valid face embedding.');
+      }
+
+      // 2. Upload new image to Cloudinary
+      const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
+        folder: 'lecturelog/students',
+      });
+
+      // 3. Get old Cloudinary ID to delete it
+      const oldData = await pool.query('SELECT cloudinary_id FROM students WHERE id = $1', [id]);
+      if (oldData.rowCount > 0 && oldData.rows[0].cloudinary_id) {
+        await cloudinary.uploader.destroy(oldData.rows[0].cloudinary_id);
+      }
+
+      // 4. Update query with image and embedding info
+      updateQuery += ', face_embedding = $7, image_url = $8, cloudinary_id = $9 WHERE id = $10 RETURNING id';
+      queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id, id);
+    } else {
+      updateQuery += ' WHERE id = $7 RETURNING id';
+      queryParams.push(id);
+    }
+
+    const result = await pool.query(updateQuery, queryParams);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Student not found' });
     }
 
+    // Clean up temp file
+    if (imageFile && fs.existsSync(imageFile.path)) {
+      fs.unlinkSync(imageFile.path);
+    }
+
     res.json({ message: 'Student updated successfully' });
   } catch (err) {
     console.error('Update Error:', err);
+    if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
     res.status(500).json({ message: err.message });
   }
 };

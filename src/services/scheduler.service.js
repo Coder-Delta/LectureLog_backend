@@ -60,10 +60,14 @@ export const initScheduler = (app) => {
               subject_id: schedule.subject_id,
               subject_name: schedule.subject_name,
               classroom_id: schedule.classroom_id,
+              classroom_name: schedule.classroom_name,
               teacher_id: schedule.teacher_id,
+              teacher_name: schedule.teacher_name,
               year: schedule.year,
               stream: schedule.stream,
-              status: 'active'
+              status: 'active',
+              start_time: startDate,
+              end_time: endDate
             });
           }
         }

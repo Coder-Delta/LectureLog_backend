@@ -240,49 +240,113 @@ export const getSessions = async (req, res) => {
     }
 
     // ── STEP 2: Fetch and Return All Sessions ──
-    let query = `
+    let sessionQuery = `
       SELECT s.*, sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
       LEFT JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN users u ON s.teacher_id = u.id
+      WHERE (s.status = 'active' OR s.status = 'scheduled' OR (s.status = 'ended' AND s.end_time >= CURRENT_DATE))
     `;
-    const params = [];
-    const conditions = [];
-
+    const sessionParams = [];
     if (year) {
-      params.push(year);
-      conditions.push(`s.year = $${params.length}`);
+      sessionParams.push(year);
+      sessionQuery += ` AND s.year = $${sessionParams.length}`;
     }
     if (stream) {
-      params.push(stream);
-      conditions.push(`s.stream = $${params.length}`);
+      sessionParams.push(stream);
+      sessionQuery += ` AND s.stream = $${sessionParams.length}`;
     }
 
-    if (conditions.length > 0) {
-      query += ` WHERE ` + conditions.join(' AND ');
+    const { rows: dbSessions } = await pool.query(sessionQuery, sessionParams);
+
+    // ── STEP 3: Fetch Today's Routine (Schedules) ──
+    let scheduleQuery = `
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name, u.name as teacher_name
+      FROM schedules s
+      JOIN subjects sub ON s.subject_id = sub.id
+      JOIN classrooms c ON s.classroom_id = c.id
+      JOIN users u ON s.teacher_id = u.id
+      WHERE s.day_of_week = $1
+    `;
+    const scheduleParams = [currentDay];
+    if (year) {
+      scheduleParams.push(year);
+      scheduleQuery += ` AND s.year = $${scheduleParams.length}`;
+    }
+    if (stream) {
+      scheduleParams.push(stream);
+      scheduleQuery += ` AND s.stream = $${scheduleParams.length}`;
     }
 
-    query += ` ORDER BY s.start_time DESC`;
+    const { rows: todayRoutine } = await pool.query(scheduleQuery, scheduleParams);
 
-    const { rows: rawSessions } = await pool.query(query, params);
+    // Convert Routine to Session format and Filter out already active ones
+    const upcomingRoutine = todayRoutine
+      .filter(routine => {
+        // Only include routine if it hasn't passed and doesn't have an active/scheduled session already
+        const routineEndTime = routine.end_time;
+        if (routineEndTime < currentTimeStr) return false;
 
-    // ── STEP 3: JavaScript Level Auditor (Final Guard) ──
-    // Even if SQL maintenance missed it, we audit here before returning
-    const sessions = await Promise.all(rawSessions.map(async (s) => {
+        const alreadyExists = dbSessions.some(sess => 
+          !sess.is_custom && 
+          sess.subject_id === routine.subject_id && 
+          sess.classroom_id === routine.classroom_id &&
+          sess.teacher_id === routine.teacher_id &&
+          (sess.status === 'active' || sess.status === 'scheduled')
+        );
+        return !alreadyExists;
+      })
+      .map(routine => ({
+        id: `routine_${routine.id}`,
+        subject_id: routine.subject_id,
+        classroom_id: routine.classroom_id,
+        teacher_id: routine.teacher_id,
+        subject_name: routine.subject_name,
+        classroom_name: routine.classroom_name,
+        teacher_name: routine.teacher_name,
+        start_time: routine.start_time,
+        end_time: routine.end_time,
+        year: routine.year,
+        stream: routine.stream,
+        status: 'scheduled',
+        is_custom: false
+      }));
+
+    // ── STEP 4: Merge and Audit ──
+    const allSessions = [...dbSessions, ...upcomingRoutine];
+
+    // Final Guard Auditor
+    const finalSessions = allSessions.map(s => {
       if (s.status === 'active') {
         const sessionEnd = new Date(s.end_time);
-        if (now > sessionEnd) {
-          // Force end in DB
-          await pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]);
-          if (io) io.emit('session_ended', { id: s.id });
+        // If it's a real timestamp, compare normally. If it's a routine string, compare string
+        const isPast = typeof s.end_time === 'string' 
+          ? s.end_time < currentTimeStr 
+          : now > sessionEnd;
+          
+        if (isPast) {
+          if (!String(s.id).startsWith('routine_')) {
+            pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
+            if (io) io.emit('session_ended', { id: s.id });
+          }
           return { ...s, status: 'ended' };
         }
       }
       return s;
-    }));
+    }).filter(s => s.status !== 'ended'); // Don't return ended ones for the live dashboard
 
-    res.json(sessions);
+    // Priority Sorting: Active first, then by start_time
+    finalSessions.sort((a, b) => {
+      if (a.status === 'active' && b.status !== 'active') return -1;
+      if (a.status !== 'active' && b.status === 'active') return 1;
+      
+      const aTime = String(a.start_time);
+      const bTime = String(b.start_time);
+      return aTime.localeCompare(bTime);
+    });
+
+    res.json(finalSessions);
   } catch (err) {
     console.error('[getSessions Maintenance Error]:', err.message);
     res.status(500).json({ message: err.message });

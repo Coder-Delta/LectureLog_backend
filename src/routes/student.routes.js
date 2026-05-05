@@ -12,6 +12,6 @@ router.get('/me', authenticateToken, getMyProfile);
 router.get('/my-attendance', authenticateToken, getMyAttendance);
 router.get('/my-stats', authenticateToken, getMyStats);
 router.delete('/:id', authenticateToken, authorizeRole('admin'), deleteStudent);
-router.put('/:id', authenticateToken, authorizeRole('admin'), updateStudent);
+router.put('/:id', authenticateToken, authorizeRole('admin'), upload.single('image'), updateStudent);
 
 export default router;
