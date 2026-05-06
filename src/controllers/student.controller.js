@@ -79,7 +79,7 @@ export const registerStudent = async (req, res) => {
  */
 export const getStudents = async (req, res) => {
   try {
-    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, image_url, created_at FROM students ORDER BY created_at DESC');
+    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, image_url, created_at FROM students ORDER BY created_at DESC');
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -94,7 +94,7 @@ export const getMyAttendance = async (req, res) => {
   const studentId = req.user.id;
   try {
     const { rows: attendance } = await pool.query(`
-      SELECT a.*, s.start_time, sub.name as subject_name
+      SELECT a.*, s.start_time, sub.id as subject_id, sub.name as subject_name
       FROM attendance a
       JOIN sessions s ON a.session_id = s.id
       JOIN subjects sub ON s.subject_id = sub.id

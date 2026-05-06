@@ -88,12 +88,28 @@ export const initScheduler = (app) => {
         });
       }
 
-      // 3. End sessions that have reached their end_time (Date-Aware Physical Deletion)
+      // 3a. Physically delete CUSTOM sessions that have expired (their purpose is done)
+      const { rows: expiredCustom } = await pool.query(`
+        SELECT id FROM sessions 
+        WHERE is_custom = true
+          AND end_time <= $1
+      `, [now]);
+
+      if (expiredCustom.length > 0) {
+        const io = app.get('io');
+        const ids = expiredCustom.map(s => s.id);
+        console.log(`[Scheduler] Auto-removing ${ids.length} expired custom session(s).`);
+        if (io) ids.forEach(id => io.emit('session_ended', { id }));
+        await pool.query('DELETE FROM sessions WHERE id = ANY($1)', [ids]);
+      }
+
+      // 3b. End/delete NON-CUSTOM sessions that have reached their end_time or are zombie (started on previous day)
       const { rows: endingSessions } = await pool.query(`
         SELECT id FROM sessions 
-        WHERE status IN ('active', 'scheduled') 
+        WHERE is_custom = false
+          AND status IN ('active', 'scheduled') 
           AND (
-            end_time <= $1 -- Past its end time today
+            end_time <= $1 -- Past its end time
             OR start_time::date < CURRENT_DATE -- Started on a previous day (Stale/Zombie session)
           )
       `, [now]);
@@ -102,16 +118,14 @@ export const initScheduler = (app) => {
         const io = app.get('io');
         const sessionIds = endingSessions.map(s => s.id);
 
-        console.log(`[Scheduler] Cleaning up ${sessionIds.length} expired sessions.`);
+        console.log(`[Scheduler] Cleaning up ${sessionIds.length} expired non-custom sessions.`);
 
-        // 1. Notify frontend first
         if (io) {
           sessionIds.forEach(id => {
             io.emit('session_ended', { id });
           });
         }
 
-        // 2. Physical Wipe from Database
         await pool.query('DELETE FROM sessions WHERE id = ANY($1)', [sessionIds]);
       }
 

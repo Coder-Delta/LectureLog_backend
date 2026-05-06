@@ -3,6 +3,10 @@ import pool from '../config/database.config.js';
 export const getSessionAttendance = async (req, res) => {
   const { id } = req.params;
   try {
+    if (String(id).startsWith('routine_') || String(id).startsWith('sched_')) {
+      return res.json([]);
+    }
+
     const { rows: attendance } = await pool.query(`
       SELECT a.*, s.name as student_name, s.email, s.roll_number
       FROM attendance a
@@ -47,3 +51,5 @@ export const markManualAttendance = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// trigger nodemon

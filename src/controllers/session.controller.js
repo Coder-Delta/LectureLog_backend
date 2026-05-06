@@ -1,19 +1,43 @@
 import pool from '../config/database.config.js';
 
+// ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
+const getCurrentWeekRange = () => {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 1=Mon...
+  const diffToMonday = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+
+  return { startOfWeek: monday, endOfWeek: sunday };
+};
+
 export const startSession = async (req, res) => {
   const { subject_id, classroom_id, duration, year, stream } = req.body;
   const teacher_id = req.user?.id;
 
   try {
-    const now = new Date();
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const currentDay = days[now.getDay()];
-
     const start_time = req.body.start_time ? new Date(req.body.start_time) : new Date();
     const end_time = req.body.end_time ? new Date(req.body.end_time) : new Date(start_time.getTime() + (duration || 60) * 60000);
+    
+    // Day of the week for the specific date provided
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const sessionDay = days[start_time.getDay()];
     const startStr = start_time.toTimeString().split(' ')[0];
 
-    // 1. Check for overlapping custom sessions
+    // 0. Validation: Cannot add a session that has already passed
+    const now_ts = new Date();
+    if (now_ts > end_time) {
+      return res.status(400).json({
+        message: 'The selected time has already passed. Please choose another time slot for today or a future date.'
+      });
+    }
+
+    // 1. Check for overlapping custom sessions (active or scheduled)
     const { rows: overlappingSessions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
@@ -42,14 +66,17 @@ export const startSession = async (req, res) => {
       });
     }
 
-    // 2. Check for collisions with Regular Schedules (Routine)
+    // 2. Check for collisions with Regular Schedules (Routine) for THAT SPECIFIC DAY
+    // We ignore routine slots that are officially CANCELLED for this specific date
     const { rows: routineCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
+      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = $7::date
       WHERE s.day_of_week = $1
         AND s.start_time <= $2::time AND s.end_time > $2::time
         AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
-    `, [currentDay, startStr, classroom_id, teacher_id, year, stream]);
+        AND cc.id IS NULL
+    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, start_time]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -62,12 +89,10 @@ export const startSession = async (req, res) => {
       });
     }
 
-    const now_ts = new Date();
+    // Determine status: active if now is within window, scheduled if future
     let status = 'active';
     if (now_ts < start_time) {
       status = 'scheduled';
-    } else if (now >= end_time) {
-      status = 'ended';
     }
 
     const result = await pool.query(
@@ -85,10 +110,12 @@ export const startSession = async (req, res) => {
       start_time,
       end_time,
       year,
-      stream
+      stream,
+      is_custom: true,
+      status
     });
 
-    res.status(201).json({ message: 'Session started', sessionId });
+    res.status(201).json({ message: 'Custom session added successfully', sessionId });
   } catch (err) {
     console.error('Session Start Error:', err.message);
     res.status(500).json({ message: err.message });
@@ -146,21 +173,35 @@ export const endBySchedule = async (req, res) => {
 
 export const cancelSession = async (req, res) => {
   const { id } = req.body;
-  console.log('[cancelSession] Attempting to cancel session ID:', id);
   try {
     const sessionId = parseInt(id);
-    if (isNaN(sessionId)) {
-      throw new Error('Invalid session ID');
+    const { rows } = await pool.query('SELECT * FROM sessions WHERE id = $1', [sessionId]);
+    
+    if (rows.length === 0) return res.status(404).json({ message: 'Session not found' });
+    const session = rows[0];
+
+    // Only custom sessions can be cancelled via this endpoint
+    if (!session.is_custom) {
+      return res.status(400).json({ message: 'Only custom sessions can be cancelled this way.' });
     }
 
-    await pool.query('UPDATE sessions SET status = $1 WHERE id = $2', ['cancelled', sessionId]);
+    // RESTRICTION: Future Week Delete Logic
+    const { startOfWeek, endOfWeek } = getCurrentWeekRange();
+    const sessionStart = new Date(session.start_time);
+    
+    if (sessionStart > endOfWeek && req.user?.role !== 'admin') {
+      return res.status(400).json({ 
+        message: 'This session belongs to a future week and cannot be deleted until that week becomes active.' 
+      });
+    }
+
+    // Mark custom session as 'cancelled' (not just physical delete)
+    await pool.query("UPDATE sessions SET status = 'cancelled' WHERE id = $1", [sessionId]);
 
     const io = req.app.get('io');
-    if (io) {
-      io.emit('session_cancelled', { id: sessionId });
-    }
+    if (io) io.emit('session_ended', { id: sessionId });
 
-    res.json({ message: 'Session cancelled' });
+    res.json({ message: 'Custom session deleted successfully' });
   } catch (err) {
     console.error('[cancelSession Error]:', err.message);
     res.status(500).json({ message: err.message });
@@ -168,7 +209,7 @@ export const cancelSession = async (req, res) => {
 };
 
 export const getSessions = async (req, res) => {
-  const { year, stream } = req.query;
+  const { year, stream, allCustom } = req.query; // allCustom=true → Sessions page: show all future custom sessions
   const io = req.app.get('io');
 
   try {
@@ -177,17 +218,33 @@ export const getSessions = async (req, res) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const currentDay = days[now.getDay()];
     const currentTimeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
-    const currentDateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
 
-    // 1. Mark past-due active sessions as ended and notify frontend
-    // We use a robust time-string comparison to avoid timezone "Ghost Sessions"
+    // 1. Mark custom sessions that have ended as 'ended' (instead of deleting)
+    const { rows: expiredCustomSessions } = await pool.query(`
+      UPDATE sessions
+      SET status = 'ended'
+      WHERE is_custom = true
+        AND status IN ('active', 'scheduled')
+        AND end_time <= $1
+      RETURNING id
+    `, [now]);
+
+    if (io && expiredCustomSessions.length > 0) {
+      expiredCustomSessions.forEach(sess => {
+        io.emit('session_ended', { id: sess.id }); // This tells frontend to refresh/move it to ended
+        console.log(`[AUTO-EXPIRE] Custom session ${sess.id} marked as ended.`);
+      });
+    }
+
+    // 2. Mark past-due NON-custom active sessions as ended and notify frontend
     const { rows: endingSessions } = await pool.query(`
       UPDATE sessions 
       SET status = 'ended' 
       WHERE status = 'active' 
+        AND is_custom = false
         AND (
-          end_time <= $1 -- Absolute time check
-          OR (is_custom = false AND (TO_CHAR(end_time, 'HH24:MI:SS') < $2)) -- Routine time check
+          end_time <= $1
+          OR (TO_CHAR(end_time, 'HH24:MI:SS') < $2)
         )
       RETURNING id
     `, [now, currentTimeStr]);
@@ -199,19 +256,20 @@ export const getSessions = async (req, res) => {
       });
     }
 
-    // 2. Check routine for current sessions
+    // 3. Check routine for current sessions and auto-start them
     const { rows: currentRoutine } = await pool.query(`
       SELECT s.*, sub.name as subject_name, c.name as classroom_name 
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
       JOIN classrooms c ON s.classroom_id = c.id
+      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
       WHERE s.day_of_week = $1 
         AND s.start_time <= $2::time 
         AND s.end_time > $2::time
+        AND cc.id IS NULL
     `, [currentDay, currentTimeStr]);
 
     for (const routine of currentRoutine) {
-      // Check if this routine session is already 'active' in the sessions table for today
       const { rows: existing } = await pool.query(`
         SELECT id FROM sessions 
         WHERE subject_id = $1 AND classroom_id = $2 
@@ -221,7 +279,6 @@ export const getSessions = async (req, res) => {
       `, [routine.subject_id, routine.classroom_id, routine.start_time]);
 
       if (existing.length === 0) {
-        // AUTO-START: Create the active session record using pure SQL date math
         const { rows: inserted } = await pool.query(`
           INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
           VALUES ($1, $2, $3, (CURRENT_DATE + $4::time), (CURRENT_DATE + $5::time), 'active', $6, $7, false)
@@ -240,15 +297,34 @@ export const getSessions = async (req, res) => {
     }
 
     // ── STEP 2: Fetch and Return All Sessions ──
+    const { startOfWeek, endOfWeek } = getCurrentWeekRange();
+
+    // Build custom session date condition based on allCustom flag:
+    // allCustom=true (Sessions page) → show ALL sessions (past/future/ended) for history
+    // allCustom=false (Timetable/Dashboard) → only current week active/scheduled
+    const customDateClause = allCustom === 'true'
+      ? `TRUE` // Don't filter by date for history
+      : `s.start_time >= $1 AND s.start_time <= $2`; 
+
+    const statusClause = allCustom === 'true'
+      ? `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`
+      : `s.status IN ('active', 'scheduled', 'ended')`; // Include 'ended' for dashboard view
+
+    const sessionParams = allCustom === 'true' ? [] : [startOfWeek, endOfWeek];
+
     let sessionQuery = `
       SELECT s.*, sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
       LEFT JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN users u ON s.teacher_id = u.id
-      WHERE (s.status = 'active' OR s.status = 'scheduled' OR (s.status = 'ended' AND s.end_time >= CURRENT_DATE))
+      WHERE (
+        (s.is_custom = false AND ${statusClause})
+        OR
+        (s.is_custom = true AND ${statusClause} AND ${customDateClause})
+      )
     `;
-    const sessionParams = [];
+
     if (year) {
       sessionParams.push(year);
       sessionQuery += ` AND s.year = $${sessionParams.length}`;
@@ -262,11 +338,13 @@ export const getSessions = async (req, res) => {
 
     // ── STEP 3: Fetch Today's Routine (Schedules) ──
     let scheduleQuery = `
-      SELECT s.*, sub.name as subject_name, c.name as classroom_name, u.name as teacher_name
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name, u.name as teacher_name,
+             CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
       JOIN classrooms c ON s.classroom_id = c.id
       JOIN users u ON s.teacher_id = u.id
+      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
       WHERE s.day_of_week = $1
     `;
     const scheduleParams = [currentDay];
@@ -284,7 +362,6 @@ export const getSessions = async (req, res) => {
     // Convert Routine to Session format and Filter out already active ones
     const upcomingRoutine = todayRoutine
       .filter(routine => {
-        // Only include routine if it hasn't passed and doesn't have an active/scheduled session already
         const routineEndTime = routine.end_time;
         if (routineEndTime < currentTimeStr) return false;
 
@@ -305,11 +382,11 @@ export const getSessions = async (req, res) => {
         subject_name: routine.subject_name,
         classroom_name: routine.classroom_name,
         teacher_name: routine.teacher_name,
-        start_time: routine.start_time,
-        end_time: routine.end_time,
+        start_time: new Date(`${new Date().toISOString().split('T')[0]}T${routine.start_time}Z`).toISOString(),
+        end_time: new Date(`${new Date().toISOString().split('T')[0]}T${routine.end_time}Z`).toISOString(),
         year: routine.year,
         stream: routine.stream,
-        status: 'scheduled',
+        status: routine.is_cancelled ? 'cancelled' : 'scheduled',
         is_custom: false
       }));
 
@@ -320,21 +397,25 @@ export const getSessions = async (req, res) => {
     const finalSessions = allSessions.map(s => {
       if (s.status === 'active') {
         const sessionEnd = new Date(s.end_time);
-        // If it's a real timestamp, compare normally. If it's a routine string, compare string
         const isPast = typeof s.end_time === 'string' 
           ? s.end_time < currentTimeStr 
           : now > sessionEnd;
           
         if (isPast) {
           if (!String(s.id).startsWith('routine_')) {
-            pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
+            if (s.is_custom) {
+              // Custom sessions are now marked as ended to keep history for the day
+              pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
+            } else {
+              pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
+            }
             if (io) io.emit('session_ended', { id: s.id });
           }
           return { ...s, status: 'ended' };
         }
       }
       return s;
-    }).filter(s => s.status !== 'ended'); // Don't return ended ones for the live dashboard
+    }).filter(s => s.status !== 'ended' || allCustom === 'true' || new Date(s.start_time).toDateString() === new Date().toDateString()); // Keep today's ended sessions for dashboard
 
     // Priority Sorting: Active first, then by start_time
     finalSessions.sort((a, b) => {
@@ -349,6 +430,29 @@ export const getSessions = async (req, res) => {
     res.json(finalSessions);
   } catch (err) {
     console.error('[getSessions Maintenance Error]:', err.message);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Admin-only: Force delete any custom session regardless of week
+export const deleteCustomSession = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const sessionId = parseInt(id);
+    const { rows } = await pool.query('SELECT * FROM sessions WHERE id = $1 AND is_custom = true', [sessionId]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Custom session not found' });
+    }
+
+    await pool.query('DELETE FROM sessions WHERE id = $1', [sessionId]);
+
+    const io = req.app.get('io');
+    if (io) io.emit('session_ended', { id: sessionId });
+
+    console.log(`[AdminDelete] Custom session ${sessionId} force-deleted by admin.`);
+    res.json({ message: 'Custom session permanently deleted', id: sessionId });
+  } catch (err) {
+    console.error('[deleteCustomSession Error]:', err.message);
     res.status(500).json({ message: err.message });
   }
 };

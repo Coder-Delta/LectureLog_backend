@@ -7,6 +7,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM time_slots ORDER BY id ASC');
+    console.log(`[TimeSlots] Fetched ${result.rows.length} slots`);
     res.status(200).json(result.rows);
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

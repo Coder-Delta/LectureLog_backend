@@ -200,6 +200,23 @@ export const cancelSchedule = async (req, res) => {
     }
 
     await pool.query('INSERT INTO cancelled_classes (schedule_id, cancel_date) VALUES ($1, CURRENT_DATE) ON CONFLICT DO NOTHING', [id]);
+
+    // Force-kill any active session that was auto-started for this routine today
+    const schedule = schedules[0];
+    const { rows: activeSessions } = await pool.query(`
+      DELETE FROM sessions 
+      WHERE subject_id = $1 AND classroom_id = $2 AND teacher_id = $3
+      AND start_time::date = CURRENT_DATE
+      AND (start_time::time)::text LIKE $4 || '%'
+      AND is_custom = false
+      RETURNING id
+    `, [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, schedule.start_time]);
+
+    const io = req.app.get('io');
+    if (io && activeSessions.length > 0) {
+      activeSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+    }
+
     res.json({ message: 'Class cancelled successfully for today' });
   } catch (err) {
     res.status(500).json({ message: err.message });
