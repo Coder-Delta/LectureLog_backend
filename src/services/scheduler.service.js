@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import pool from '../config/database.config.js';
+import axios from 'axios';
 
 export const initScheduler = (app) => {
   // Run every minute
@@ -69,6 +70,9 @@ export const initScheduler = (app) => {
               start_time: startDate,
               end_time: endDate
             });
+
+            // Notify AI service to start scanning
+            axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
           }
         }
       }
@@ -85,6 +89,9 @@ export const initScheduler = (app) => {
         toActivate.forEach(s => {
           console.log(`[Scheduler] Activating manually scheduled session ${s.id}`);
           if (io) io.emit('session_started', { id: s.id, subject_id: s.subject_id });
+          
+          // Notify AI service
+          axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
         });
       }
 

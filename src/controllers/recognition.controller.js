@@ -17,7 +17,7 @@ export const processRecognition = async (req, res) => {
       const { year, stream } = student[0];
 
       const { rows: activeSessions } = await pool.query(
-        'SELECT id FROM sessions WHERE status = $1 AND year = $2 AND stream = $3', 
+        'SELECT id FROM sessions WHERE status = $1 AND year = $2 AND stream = $3',
         ['active', year, stream]
       );
 

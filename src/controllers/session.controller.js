@@ -1,4 +1,5 @@
 import pool from '../config/database.config.js';
+import axios from 'axios';
 
 // ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
 const getCurrentWeekRange = () => {
@@ -114,6 +115,9 @@ export const startSession = async (req, res) => {
       is_custom: true,
       status
     });
+
+    // Notify AI service to refresh and start scanning immediately
+    axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => console.warn('AI Refresh failed on session start'));
 
     res.status(201).json({ message: 'Custom session added successfully', sessionId });
   } catch (err) {
@@ -292,6 +296,9 @@ export const getSessions = async (req, res) => {
             classroom_name: routine.classroom_name
           });
           console.log(`[AUTO-START] Activated routine session: ${routine.subject_name}`);
+          
+          // Notify AI service
+          axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
         }
       }
     }

@@ -13,10 +13,10 @@ export const signup = async (req, res) => {
         "SELECT * FROM users WHERE email = $1 AND role = 'teacher'",
         [email]
       );
-      
+
       if (preRegistered.length === 0) {
-        return res.status(403).json({ 
-          message: 'Public teacher signup is disabled. Only pre-registered teachers can sign up. Please contact your administrator.' 
+        return res.status(403).json({
+          message: 'Public teacher signup is disabled. Only pre-registered teachers can sign up. Please contact your administrator.'
         });
       }
 
@@ -26,7 +26,7 @@ export const signup = async (req, res) => {
         'UPDATE users SET name = $1, password = $2 WHERE email = $3',
         [name, hashedPassword, email]
       );
-      
+
       return res.status(200).json({
         message: 'Teacher account activated successfully!'
       });
@@ -59,8 +59,8 @@ export const login = async (req, res) => {
 
     // STRICT ROLE CHECK: Only allow login if the role matches (e.g. Teacher login must have role 'teacher')
     if (role && user.role !== role) {
-      return res.status(401).json({ 
-        message: `Unauthorized: This account is not registered as a ${role.charAt(0).toUpperCase() + role.slice(1)}.` 
+      return res.status(401).json({
+        message: `Unauthorized: This account is not registered as a ${role.charAt(0).toUpperCase() + role.slice(1)}.`
       });
     }
 
@@ -114,7 +114,7 @@ export const studentLogin = async (req, res) => {
   const { roll_number, college_id } = req.body;
   try {
     const { rows: students } = await pool.query(
-      'SELECT * FROM students WHERE roll_number = $1 AND college_id = $2', 
+      'SELECT * FROM students WHERE roll_number = $1 AND college_id = $2',
       [roll_number, college_id]
     );
 
@@ -129,16 +129,16 @@ export const studentLogin = async (req, res) => {
       { expiresIn: '1d' }
     );
 
-    res.json({ 
-      token, 
-      user: { 
-        id: student.id, 
-        name: student.name, 
-        roll_number: student.roll_number, 
+    res.json({
+      token,
+      user: {
+        id: student.id,
+        name: student.name,
+        roll_number: student.roll_number,
         year: student.year,
         stream: student.stream,
-        role: 'student' 
-      } 
+        role: 'student'
+      }
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

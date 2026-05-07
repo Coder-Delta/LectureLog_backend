@@ -4,6 +4,8 @@ import { Server } from "socket.io";
 import app from "./app.js";
 import { testDatabaseConnection } from "./config/database.config.js";
 import { initScheduler } from "./services/scheduler.service.js";
+import { initAIServiceMonitor } from "./services/ai.service.js";
+import { initCameraBackend } from "./services/camera.service.js";
 
 dotenv.config();
 
@@ -24,6 +26,8 @@ const startServer = async () => {
     console.log("Connected to PostgreSQL database.");
 
     initScheduler(app);
+    initAIServiceMonitor(app);
+    initCameraBackend();
 
     server.listen(PORT, () => {
       console.log(`LectureLog backend running on port ${PORT}`);
