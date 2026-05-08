@@ -2,8 +2,8 @@ import pool from '../config/database.config.js';
 import axios from 'axios';
 
 // ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
-const getCurrentWeekRange = () => {
-  const now = new Date();
+const getCurrentWeekRange = (value = null) => {
+  const now = value ? new Date(`${value}T00:00:00`) : new Date();
   const day = now.getDay(); // 0=Sun, 1=Mon...
   const diffToMonday = (day === 0 ? -6 : 1) - day;
   const monday = new Date(now);
@@ -131,10 +131,9 @@ export const endSession = async (req, res) => {
   if (!id) return res.status(400).json({ message: 'Session ID is required' });
 
   try {
-    console.log(`[HardDelete] Physically removing session ID: ${id}`);
+    console.log(`[EndSession] Marking session ID ${id} as ended`);
 
-    // 1. Hard delete from database
-    const result = await pool.query('DELETE FROM sessions WHERE id = $1 RETURNING id', [id]);
+    const result = await pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1 RETURNING id", [id]);
 
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Session not found' });
@@ -146,9 +145,9 @@ export const endSession = async (req, res) => {
       io.emit('session_ended', { id });
     }
 
-    res.json({ message: 'Session deleted from database', id });
+    res.json({ message: 'Session ended', id });
   } catch (err) {
-    console.error('[HardDelete Error]:', err.message);
+    console.error('[EndSession Error]:', err.message);
     res.status(500).json({ message: err.message });
   }
 };
@@ -213,7 +212,7 @@ export const cancelSession = async (req, res) => {
 };
 
 export const getSessions = async (req, res) => {
-  const { year, stream, allCustom } = req.query; // allCustom=true → Sessions page: show all future custom sessions
+  const { year, stream, allCustom, week_start } = req.query; // allCustom=true → Sessions page: show all future custom sessions
   const io = req.app.get('io');
 
   try {
@@ -285,7 +284,10 @@ export const getSessions = async (req, res) => {
       if (existing.length === 0) {
         const { rows: inserted } = await pool.query(`
           INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
-          VALUES ($1, $2, $3, (CURRENT_DATE + $4::time), (CURRENT_DATE + $5::time), 'active', $6, $7, false)
+          VALUES ($1, $2, $3, 
+            (CURRENT_DATE + $4::time)::timestamp, 
+            (CURRENT_DATE + $5::time)::timestamp, 
+            'active', $6, $7, false)
           RETURNING *
         `, [routine.subject_id, routine.classroom_id, routine.teacher_id, routine.start_time, routine.end_time, routine.year, routine.stream]);
 
@@ -304,7 +306,7 @@ export const getSessions = async (req, res) => {
     }
 
     // ── STEP 2: Fetch and Return All Sessions ──
-    const { startOfWeek, endOfWeek } = getCurrentWeekRange();
+    const { startOfWeek, endOfWeek } = getCurrentWeekRange(week_start);
 
     // Build custom session date condition based on allCustom flag:
     // allCustom=true (Sessions page) → show ALL sessions (past/future/ended) for history
@@ -313,14 +315,17 @@ export const getSessions = async (req, res) => {
       ? `TRUE` // Don't filter by date for history
       : `s.start_time >= $1 AND s.start_time <= $2`; 
 
-    const statusClause = allCustom === 'true'
+    const statusClause = allCustom === 'true' || week_start
       ? `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`
       : `s.status IN ('active', 'scheduled', 'ended')`; // Include 'ended' for dashboard view
 
     const sessionParams = allCustom === 'true' ? [] : [startOfWeek, endOfWeek];
 
     let sessionQuery = `
-      SELECT s.*, sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
+      SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
+             TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as start_time,
+             TO_CHAR(s.end_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as end_time,
+             sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
       LEFT JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id
@@ -389,8 +394,9 @@ export const getSessions = async (req, res) => {
         subject_name: routine.subject_name,
         classroom_name: routine.classroom_name,
         teacher_name: routine.teacher_name,
-        start_time: new Date(`${new Date().toISOString().split('T')[0]}T${routine.start_time}Z`).toISOString(),
-        end_time: new Date(`${new Date().toISOString().split('T')[0]}T${routine.end_time}Z`).toISOString(),
+        // Removed 'Z' to treat routine time as local "Wall Clock" time
+        start_time: `${new Date().toISOString().split('T')[0]}T${routine.start_time}`,
+        end_time: `${new Date().toISOString().split('T')[0]}T${routine.end_time}`,
         year: routine.year,
         stream: routine.stream,
         status: routine.is_cancelled ? 'cancelled' : 'scheduled',
@@ -422,7 +428,12 @@ export const getSessions = async (req, res) => {
         }
       }
       return s;
-    }).filter(s => s.status !== 'ended' || allCustom === 'true' || new Date(s.start_time).toDateString() === new Date().toDateString()); // Keep today's ended sessions for dashboard
+    }).filter(s =>
+      s.status !== 'ended' ||
+      allCustom === 'true' ||
+      week_start ||
+      new Date(s.start_time).toDateString() === new Date().toDateString()
+    ); // Keep ended sessions for history views, and today's ended sessions for dashboard
 
     // Priority Sorting: Active first, then by start_time
     finalSessions.sort((a, b) => {

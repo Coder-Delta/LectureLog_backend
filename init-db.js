@@ -91,8 +91,23 @@ const initDb = async () => {
         teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         start_time TIMESTAMPTZ NOT NULL,
         end_time TIMESTAMPTZ NOT NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'ended', 'cancelled'))
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'scheduled', 'ended', 'cancelled'))
       )
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'sessions_status_check'
+        ) THEN
+          ALTER TABLE sessions DROP CONSTRAINT sessions_status_check;
+        END IF;
+        ALTER TABLE sessions
+          ADD CONSTRAINT sessions_status_check
+          CHECK (status IN ('active', 'scheduled', 'ended', 'cancelled'));
+      END $$;
     `);
 
     await client.query(`
@@ -139,6 +154,43 @@ const initDb = async () => {
         cancel_date DATE NOT NULL DEFAULT CURRENT_DATE,
         UNIQUE (schedule_id, cancel_date)
       )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS timetable_week_entries (
+        id SERIAL PRIMARY KEY,
+        week_start DATE NOT NULL,
+        entry_date DATE,
+        source_type VARCHAR(20) NOT NULL CHECK (source_type IN ('regular', 'custom')),
+        source_id INTEGER,
+        action VARCHAR(20) NOT NULL CHECK (action IN ('active', 'cancelled', 'deleted')),
+        subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
+        classroom_id INTEGER REFERENCES classrooms(id) ON DELETE SET NULL,
+        teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        day_of_week VARCHAR(20) NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
+        start_time TIME NOT NULL,
+        end_time TIME NOT NULL,
+        year VARCHAR(1) NOT NULL DEFAULT '1' CHECK (year IN ('1', '2', '3', '4')),
+        stream VARCHAR(50) NOT NULL DEFAULT 'CSE',
+        camera_id VARCHAR(50) NOT NULL DEFAULT '0',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'timetable_week_entries_action_check'
+        ) THEN
+          ALTER TABLE timetable_week_entries DROP CONSTRAINT timetable_week_entries_action_check;
+        END IF;
+        ALTER TABLE timetable_week_entries
+          ADD CONSTRAINT timetable_week_entries_action_check
+          CHECK (action IN ('active', 'cancelled', 'deleted'));
+      END $$;
     `);
 
     // Ensure the stream column exists in schedules if the table was already created

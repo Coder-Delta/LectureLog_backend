@@ -1,5 +1,28 @@
 import pool from '../config/database.config.js';
 
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const toDateOnly = (date) => date.toISOString().split('T')[0];
+
+const getWeekStartDate = (value = null) => {
+  const base = value ? new Date(`${value}T00:00:00`) : new Date();
+  const day = base.getDay();
+  const diffToMonday = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(base);
+  monday.setDate(base.getDate() + diffToMonday);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+};
+
+const getDateForDay = (weekStart, dayOfWeek) => {
+  const idx = DAYS.indexOf(dayOfWeek);
+  const date = new Date(weekStart);
+  date.setDate(weekStart.getDate() + (idx === 0 ? 6 : idx - 1));
+  return date;
+};
+
+const isFutureWeek = (weekStart) => weekStart > getWeekStartDate();
+
 export const createSchedule = async (req, res) => {
   const { subject_id, classroom_id, day_of_week, start_time, end_time, teacher_id, year, camera_id, stream } = req.body;
   const creator_id = req.user.id;
@@ -58,18 +81,71 @@ export const createSchedule = async (req, res) => {
 };
 
 export const getSchedules = async (req, res) => {
-  const { year, stream } = req.query;
+  const { year, stream, week_start } = req.query;
   try {
+    const targetWeekStart = getWeekStartDate(week_start);
+    const targetWeekStartStr = toDateOnly(targetWeekStart);
+
+    if (!isFutureWeek(targetWeekStart)) {
+      await pool.query(`
+        INSERT INTO timetable_week_entries (
+          week_start, entry_date, source_type, source_id, action,
+          subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
+          year, stream, camera_id, created_by
+        )
+        SELECT
+          $1::date,
+          $1::date + (
+            CASE s.day_of_week
+              WHEN 'Monday' THEN 0
+              WHEN 'Tuesday' THEN 1
+              WHEN 'Wednesday' THEN 2
+              WHEN 'Thursday' THEN 3
+              WHEN 'Friday' THEN 4
+              WHEN 'Saturday' THEN 5
+              ELSE 6
+            END
+          ),
+          'regular',
+          s.id,
+          'active',
+          s.subject_id,
+          s.classroom_id,
+          s.teacher_id,
+          s.day_of_week,
+          s.start_time,
+          s.end_time,
+          s.year,
+          s.stream,
+          s.camera_id,
+          $2
+        FROM schedules s
+        WHERE NOT EXISTS (
+          SELECT 1 FROM timetable_week_entries twe
+          WHERE twe.week_start = $1::date
+            AND twe.source_type = 'regular'
+            AND twe.source_id = s.id
+            AND twe.action = 'active'
+        )
+      `, [targetWeekStartStr, req.user?.id || null]);
+    }
+
     let query = `
       SELECT s.*, sub.name as subject_name, u.name as teacher_name, c.name as classroom_name,
-             CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled
+             CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled,
+             false as is_deleted_history,
+             false as is_snapshot_history,
+             'regular' as source_type
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
       JOIN users u ON s.teacher_id = u.id
       JOIN classrooms c ON s.classroom_id = c.id
-      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
+      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id
+        AND cc.cancel_date >= $1::date
+        AND cc.cancel_date < ($1::date + interval '7 days')
+        AND TRIM(TO_CHAR(cc.cancel_date, 'Day')) = s.day_of_week
     `;
-    const params = [];
+    const params = [targetWeekStartStr];
     const conditions = [];
     
     if (year) {
@@ -87,7 +163,48 @@ export const getSchedules = async (req, res) => {
     }
 
     const { rows: schedules } = await pool.query(query, params);
-    res.json(schedules);
+
+    let historyQuery = `
+      SELECT twe.id, twe.source_id, twe.subject_id, twe.classroom_id, twe.teacher_id,
+             twe.day_of_week, twe.start_time, twe.end_time, twe.year, twe.stream, twe.camera_id,
+             sub.name as subject_name, u.name as teacher_name, c.name as classroom_name,
+             CASE WHEN twe.action = 'active' THEN false ELSE true END as is_cancelled,
+             CASE WHEN twe.action = 'active' THEN false ELSE true END as is_deleted_history,
+             true as is_snapshot_history,
+             twe.source_type,
+             twe.action as history_action
+      FROM timetable_week_entries twe
+      LEFT JOIN subjects sub ON twe.subject_id = sub.id
+      LEFT JOIN users u ON twe.teacher_id = u.id
+      LEFT JOIN classrooms c ON twe.classroom_id = c.id
+      WHERE twe.week_start = $1::date
+        AND NOT EXISTS (
+          SELECT 1 FROM schedules live
+          WHERE twe.source_type = 'regular' AND live.id = twe.source_id
+        )
+        AND NOT (
+          twe.action = 'active'
+          AND EXISTS (
+            SELECT 1 FROM timetable_week_entries later
+            WHERE later.week_start = twe.week_start
+              AND later.source_type = twe.source_type
+              AND later.source_id = twe.source_id
+              AND later.action IN ('cancelled', 'deleted')
+          )
+        )
+    `;
+    const historyParams = [targetWeekStartStr];
+    if (year) {
+      historyParams.push(year);
+      historyQuery += ` AND twe.year = $${historyParams.length}`;
+    }
+    if (stream) {
+      historyParams.push(stream);
+      historyQuery += ` AND twe.stream = $${historyParams.length}`;
+    }
+
+    const { rows: historyRows } = await pool.query(historyQuery, historyParams);
+    res.json([...schedules, ...historyRows]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -175,7 +292,40 @@ export const updateSchedule = async (req, res) => {
 
 export const deleteSchedule = async (req, res) => {
   const { id } = req.params;
+  const weekStartInput = req.query.week_start || req.body?.week_start;
   try {
+    const { rows } = await pool.query('SELECT * FROM schedules WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Schedule not found' });
+
+    const schedule = rows[0];
+    const targetWeekStart = getWeekStartDate(weekStartInput);
+    const targetWeekStartStr = toDateOnly(targetWeekStart);
+
+    if (!isFutureWeek(targetWeekStart)) {
+      await pool.query(`
+        INSERT INTO timetable_week_entries (
+          week_start, entry_date, source_type, source_id, action,
+          subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
+          year, stream, camera_id, created_by
+        )
+        VALUES ($1, $2, 'regular', $3, 'deleted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `, [
+        targetWeekStartStr,
+        toDateOnly(getDateForDay(targetWeekStart, schedule.day_of_week)),
+        schedule.id,
+        schedule.subject_id,
+        schedule.classroom_id,
+        schedule.teacher_id,
+        schedule.day_of_week,
+        schedule.start_time,
+        schedule.end_time,
+        schedule.year,
+        schedule.stream,
+        schedule.camera_id,
+        req.user?.id || null,
+      ]);
+    }
+
     await pool.query('DELETE FROM schedules WHERE id = $1', [id]);
     res.json({ message: 'Schedule deleted' });
   } catch (err) {
@@ -203,6 +353,36 @@ export const cancelSchedule = async (req, res) => {
 
     // Force-kill any active session that was auto-started for this routine today
     const schedule = schedules[0];
+    const targetWeekStart = getWeekStartDate();
+    await pool.query(`
+      INSERT INTO timetable_week_entries (
+        week_start, entry_date, source_type, source_id, action,
+        subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
+        year, stream, camera_id, created_by
+      )
+      SELECT $1, CURRENT_DATE, 'regular', $2, 'cancelled', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+      WHERE NOT EXISTS (
+        SELECT 1 FROM timetable_week_entries
+        WHERE week_start = $1::date
+          AND source_type = 'regular'
+          AND source_id = $2
+          AND action = 'cancelled'
+      )
+    `, [
+      toDateOnly(targetWeekStart),
+      schedule.id,
+      schedule.subject_id,
+      schedule.classroom_id,
+      schedule.teacher_id,
+      schedule.day_of_week,
+      schedule.start_time,
+      schedule.end_time,
+      schedule.year,
+      schedule.stream,
+      schedule.camera_id,
+      teacher_id,
+    ]);
+
     const { rows: activeSessions } = await pool.query(`
       DELETE FROM sessions 
       WHERE subject_id = $1 AND classroom_id = $2 AND teacher_id = $3
