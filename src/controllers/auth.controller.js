@@ -2,8 +2,11 @@ import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import { Resend } from 'resend';
 
 dotenv.config();
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export const signup = async (req, res) => {
   const { name, email, password, role, organization_id } = req.body;
@@ -38,6 +41,24 @@ export const claimInit = async (req, res) => {
       await pool.query("UPDATE users SET otp_code = $1, otp_expiry = $2 WHERE id = $3", [otp, expiry, target.id]);
     } else {
       await pool.query("UPDATE students SET otp_code = $1, otp_expiry = $2 WHERE id = $3", [otp, expiry, target.id]);
+    }
+
+    // Send Real Email if API Key exists
+    if (process.env.RESEND_API_KEY) {
+      await resend.emails.send({
+        from: 'LectureLog <onboarding@resend.dev>',
+        to: email,
+        subject: 'LectureLog - Your Verification Code',
+        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+          <h2 style="color: #105934;">LectureLog Verification</h2>
+          <p>Hello,</p>
+          <p>Your verification code for LectureLog is:</p>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0;">${otp}</div>
+          <p>This code will expire in 10 minutes.</p>
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 12px; color: #666;">If you didn't request this, you can safely ignore this email.</p>
+        </div>`
+      });
     }
 
     console.log(`[AUTH] OTP for ${email}: ${otp}`);
@@ -79,6 +100,23 @@ export const adminSignupInit = async (req, res) => {
     const expiry = new Date(Date.now() + 10 * 60 * 1000);
     const orgRes = await pool.query('INSERT INTO organizations (name, slug, status) VALUES ($1, $2, $3) RETURNING id', [orgName, slug, 'pending']);
     await pool.query('INSERT INTO users (name, email, organization_id, role, is_active, otp_code, otp_expiry) VALUES ($1, $2, $3, $4, $5, $6, $7)', [name, email, orgRes.rows[0].id, 'admin', false, otp, expiry]);
+    
+    // Send Real Email if API Key exists
+    if (process.env.RESEND_API_KEY) {
+      await resend.emails.send({
+        from: 'LectureLog <onboarding@resend.dev>',
+        to: email,
+        subject: 'Welcome to LectureLog - Verify Your College',
+        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+          <h2 style="color: #105934;">Welcome to LectureLog!</h2>
+          <p>Thank you for registering <strong>${orgName}</strong>.</p>
+          <p>To complete your college registration, please use the following verification code:</p>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0;">${otp}</div>
+          <p>This code will expire in 10 minutes.</p>
+        </div>`
+      });
+    }
+
     console.log(`[AUTH] Admin OTP: ${otp}`);
     res.json({ message: 'OTP sent' });
   } catch (err) {
