@@ -3,6 +3,7 @@ import multer from 'multer';
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import {
   registerTeacher,
+  updateTeacher,
   getTeachers,
   deleteTeacher,
   getMyProfile
@@ -14,8 +15,9 @@ const router = express.Router();
 const upload = multer({ dest: 'uploads/' });
 
 router.get('/me', authenticateToken, getMyProfile);
-router.post('/', upload.single('image'), registerTeacher);
-router.get('/', getTeachers);
-router.delete('/:id', deleteTeacher);
+router.post('/', authenticateToken, upload.single('image'), registerTeacher);
+router.put('/:id', authenticateToken, upload.single('image'), updateTeacher);
+router.get('/', authenticateToken, getTeachers);
+router.delete('/:id', authenticateToken, deleteTeacher);
 
 export default router;

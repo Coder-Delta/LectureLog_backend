@@ -1,5 +1,6 @@
 import pool from '../config/database.config.js';
 import axios from 'axios';
+import bcrypt from 'bcryptjs';
 
 // ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
 const getCurrentWeekRange = (value = null) => {
@@ -15,6 +16,53 @@ const getCurrentWeekRange = (value = null) => {
   sunday.setHours(23, 59, 59, 999);
 
   return { startOfWeek: monday, endOfWeek: sunday };
+};
+
+// ── Helper: Finalize Session (Mark ended and fill absent records) ──────────────
+export const finalizeSession = async (sessionId, io = null) => {
+  try {
+    console.log(`[Finalizer] Finalizing session ID: ${sessionId}`);
+    
+    // 1. Mark session as ended
+    const { rows: sessions } = await pool.query(
+      "UPDATE sessions SET status = 'ended' WHERE id = $1 RETURNING *",
+      [sessionId]
+    );
+    
+    if (sessions.length === 0) return;
+    const session = sessions[0];
+    
+    // 2. Identify students who should have been present (Roster)
+    if (session.year && session.stream) {
+      const { rows: roster } = await pool.query(
+        "SELECT id FROM students WHERE year::text = $1::text AND LOWER(stream) = LOWER($2) AND status = 'active'",
+        [session.year, session.stream]
+      );
+      
+      if (roster.length > 0) {
+        // 3. Mark all missing students as 'absent'
+        // ON CONFLICT DO NOTHING ensures we don't overwrite 'present' records
+        const valueStrings = roster.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(',');
+        const flatValues = roster.flatMap(s => [s.id, sessionId, 'absent']);
+        
+        await pool.query(`
+          INSERT INTO attendance (student_id, session_id, status)
+          VALUES ${valueStrings}
+          ON CONFLICT (student_id, session_id) DO NOTHING
+        `, flatValues);
+        
+        console.log(`[Finalizer] Session ${sessionId} finalized. Roster size: ${roster.length}. Attendance state preserved.`);
+      }
+    }
+    
+    if (io) {
+      io.emit('session_ended', { id: sessionId });
+    }
+    return true;
+  } catch (err) {
+    console.error(`[Finalizer Error] Session ${sessionId}:`, err.message);
+    return false;
+  }
 };
 
 export const startSession = async (req, res) => {
@@ -102,6 +150,13 @@ export const startSession = async (req, res) => {
     );
     const sessionId = result.rows[0].id;
 
+    // Fetch names for the broadcast
+    const { rows: meta } = await pool.query(`
+      SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
+      FROM subjects sub, classrooms c, users u
+      WHERE sub.id = $1 AND c.id = $2 AND u.id = $3
+    `, [subject_id, classroom_id, teacher_id]);
+
     const io = req.app.get('io');
     io.emit('session_started', {
       id: sessionId,
@@ -113,7 +168,12 @@ export const startSession = async (req, res) => {
       year,
       stream,
       is_custom: true,
-      status
+      status,
+      subject_name: meta[0]?.subject_name,
+      classroom_name: meta[0]?.classroom_name,
+      camera_name: meta[0]?.camera_name,
+      camera_url: meta[0]?.camera_url,
+      teacher_name: meta[0]?.teacher_name
     });
 
     // Notify AI service to refresh and start scanning immediately
@@ -133,10 +193,10 @@ export const endSession = async (req, res) => {
   try {
     console.log(`[EndSession] Marking session ID ${id} as ended`);
 
-    const result = await pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1 RETURNING id", [id]);
+    const result = await finalizeSession(id, req.app.get('io'));
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Session not found' });
+    if (!result) {
+      return res.status(404).json({ message: 'Session not found or already finalized' });
     }
 
     // 2. Immediate Broadcast to Dashboard
@@ -163,19 +223,20 @@ export const endBySchedule = async (req, res) => {
       [schedule_id]
     );
 
-    const io = req.app.get('io');
-    if (io && deleted.length > 0) {
-      deleted.forEach(s => io.emit('session_ended', { id: s.id }));
+    // Call finalizer for each session to ensure attendance is saved before "removal"
+    for (const sess of deleted) {
+      await finalizeSession(sess.id, io);
     }
 
-    res.json({ message: 'Sessions physically deleted', count: deleted.length });
+    res.json({ message: 'Sessions marked as ended and finalized', count: deleted.length });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
 export const cancelSession = async (req, res) => {
-  const { id } = req.body;
+  const { id, password } = req.body;
+  const teacher_id = req.user.id;
   try {
     const sessionId = parseInt(id);
     const { rows } = await pool.query('SELECT * FROM sessions WHERE id = $1', [sessionId]);
@@ -196,6 +257,15 @@ export const cancelSession = async (req, res) => {
       return res.status(400).json({ 
         message: 'This session belongs to a future week and cannot be deleted until that week becomes active.' 
       });
+    }
+
+    // Verify password
+    const { rows: users } = await pool.query('SELECT password FROM users WHERE id = $1', [teacher_id]);
+    if (users.length === 0) return res.status(404).json({ message: 'User not found' });
+    
+    const isMatch = await bcrypt.compare(password, users[0].password);
+    if (!isMatch) {
+      return res.status(403).json({ message: 'Invalid password. Cancellation denied.' });
     }
 
     // Mark custom session as 'cancelled' (not just physical delete)
@@ -232,11 +302,10 @@ export const getSessions = async (req, res) => {
       RETURNING id
     `, [now]);
 
-    if (io && expiredCustomSessions.length > 0) {
-      expiredCustomSessions.forEach(sess => {
-        io.emit('session_ended', { id: sess.id }); // This tells frontend to refresh/move it to ended
-        console.log(`[AUTO-EXPIRE] Custom session ${sess.id} marked as ended.`);
-      });
+    if (expiredCustomSessions.length > 0) {
+      for (const sess of expiredCustomSessions) {
+        await finalizeSession(sess.id, io);
+      }
     }
 
     // 2. Mark past-due NON-custom active sessions as ended and notify frontend
@@ -252,11 +321,10 @@ export const getSessions = async (req, res) => {
       RETURNING id
     `, [now, currentTimeStr]);
 
-    if (io && endingSessions.length > 0) {
-      endingSessions.forEach(sess => {
-        io.emit('session_ended', { id: sess.id });
-        console.log(`[AUTO-END] Session ${sess.id} cleaned up.`);
-      });
+    if (endingSessions.length > 0) {
+      for (const sess of endingSessions) {
+        await finalizeSession(sess.id, io);
+      }
     }
 
     // 3. Check routine for current sessions and auto-start them
@@ -325,7 +393,7 @@ export const getSessions = async (req, res) => {
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
              TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as start_time,
              TO_CHAR(s.end_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as end_time,
-             sub.name as subject_name, c.camera_url, c.name as classroom_name, u.name as teacher_name
+             sub.name as subject_name, c.camera_url, c.camera_name, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
       LEFT JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id
@@ -348,25 +416,28 @@ export const getSessions = async (req, res) => {
 
     const { rows: dbSessions } = await pool.query(sessionQuery, sessionParams);
 
-    // ── STEP 3: Fetch Today's Routine (Schedules) ──
+    // ── STEP 3: Fetch Today's Routine (from Timetable entries) ──
+    // We query timetable_week_entries to match exactly what is shown on the Timetable page
     let scheduleQuery = `
-      SELECT s.*, sub.name as subject_name, c.name as classroom_name, u.name as teacher_name,
-             CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled
-      FROM schedules s
-      JOIN subjects sub ON s.subject_id = sub.id
-      JOIN classrooms c ON s.classroom_id = c.id
-      JOIN users u ON s.teacher_id = u.id
-      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
-      WHERE s.day_of_week = $1
+      SELECT t.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name,
+             false as is_cancelled
+      FROM timetable_week_entries t
+      JOIN subjects sub ON t.subject_id = sub.id
+      LEFT JOIN classrooms c ON t.classroom_id = c.id
+      LEFT JOIN users u ON t.teacher_id = u.id
+      WHERE t.day_of_week = $1 
+      AND t.action = 'active'
+      AND t.week_start <= CURRENT_DATE 
+      AND (t.week_start + interval '6 days') >= CURRENT_DATE
     `;
     const scheduleParams = [currentDay];
     if (year) {
       scheduleParams.push(year);
-      scheduleQuery += ` AND s.year = $${scheduleParams.length}`;
+      scheduleQuery += ` AND t.year = $${scheduleParams.length}`;
     }
     if (stream) {
       scheduleParams.push(stream);
-      scheduleQuery += ` AND s.stream = $${scheduleParams.length}`;
+      scheduleQuery += ` AND t.stream = $${scheduleParams.length}`;
     }
 
     const { rows: todayRoutine } = await pool.query(scheduleQuery, scheduleParams);
@@ -375,39 +446,55 @@ export const getSessions = async (req, res) => {
     const upcomingRoutine = todayRoutine
       .filter(routine => {
         const routineEndTime = routine.end_time;
-        if (routineEndTime < currentTimeStr) return false;
+        const isPast = routineEndTime < currentTimeStr;
+        
+        // If it's in the past and we're NOT on the history/allCustom page, 
+        // we only show it if a real session was recorded (handled by dbSessions).
+        // On the Sessions page (allCustom), we show even the 'missed' routine slots for the day.
+        if (isPast && allCustom !== 'true') return false;
 
-        const alreadyExists = dbSessions.some(sess => 
-          !sess.is_custom && 
-          sess.subject_id === routine.subject_id && 
-          sess.classroom_id === routine.classroom_id &&
-          sess.teacher_id === routine.teacher_id &&
-          (sess.status === 'active' || sess.status === 'scheduled')
-        );
+        const alreadyExists = dbSessions.some(sess => {
+          const sessTime = new Date(sess.start_time).toLocaleTimeString('en-GB', { hour12: false });
+          // Handle both TIME string and TIMESTAMPTZ
+          const routineTime = routine.start_time.includes(':') ? routine.start_time : new Date(routine.start_time).toLocaleTimeString('en-GB', { hour12: false });
+          
+          return !sess.is_custom && 
+            sess.subject_id === routine.subject_id && 
+            sess.classroom_id === routine.classroom_id &&
+            sess.teacher_id === routine.teacher_id &&
+            sessTime.startsWith(routine.start_time.substring(0, 5)) &&
+            (sess.status === 'active' || sess.status === 'scheduled' || sess.status === 'ended' || sess.status === 'cancelled');
+        });
         return !alreadyExists;
       })
-      .map(routine => ({
-        id: `routine_${routine.id}`,
-        subject_id: routine.subject_id,
-        classroom_id: routine.classroom_id,
-        teacher_id: routine.teacher_id,
-        subject_name: routine.subject_name,
-        classroom_name: routine.classroom_name,
-        teacher_name: routine.teacher_name,
-        // Removed 'Z' to treat routine time as local "Wall Clock" time
-        start_time: `${new Date().toISOString().split('T')[0]}T${routine.start_time}`,
-        end_time: `${new Date().toISOString().split('T')[0]}T${routine.end_time}`,
-        year: routine.year,
-        stream: routine.stream,
-        status: routine.is_cancelled ? 'cancelled' : 'scheduled',
-        is_custom: false
-      }));
+      .map(routine => {
+        const isPast = routine.end_time < currentTimeStr;
+        return {
+          id: `routine_${routine.id}`,
+          subject_id: routine.subject_id,
+          classroom_id: routine.classroom_id,
+          teacher_id: routine.teacher_id,
+          subject_name: routine.subject_name,
+          classroom_name: routine.classroom_name,
+          teacher_name: routine.teacher_name,
+          camera_name: routine.camera_name,
+          camera_url: routine.camera_url,
+          start_time: `${new Date().toISOString().split('T')[0]}T${routine.start_time}`,
+          end_time: `${new Date().toISOString().split('T')[0]}T${routine.end_time}`,
+          year: routine.year,
+          stream: routine.stream,
+          status: routine.is_cancelled ? 'cancelled' : (isPast ? 'ended' : 'scheduled'),
+          is_custom: false
+        };
+      });
 
     // ── STEP 4: Merge and Audit ──
     const allSessions = [...dbSessions, ...upcomingRoutine];
 
     // Final Guard Auditor
-    const finalSessions = allSessions.map(s => {
+    const finalSessions = [];
+    for (const s of allSessions) {
+      let updatedS = { ...s };
       if (s.status === 'active') {
         const sessionEnd = new Date(s.end_time);
         const isPast = typeof s.end_time === 'string' 
@@ -416,27 +503,22 @@ export const getSessions = async (req, res) => {
           
         if (isPast) {
           if (!String(s.id).startsWith('routine_')) {
-            if (s.is_custom) {
-              // Custom sessions are now marked as ended to keep history for the day
-              pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
-            } else {
-              pool.query("UPDATE sessions SET status = 'ended' WHERE id = $1", [s.id]).catch(e => {});
-            }
-            if (io) io.emit('session_ended', { id: s.id });
+            await finalizeSession(s.id, io);
           }
-          return { ...s, status: 'ended' };
+          updatedS.status = 'ended';
         }
       }
-      return s;
-    }).filter(s =>
+      finalSessions.push(updatedS);
+    }
+    const filteredSessions = finalSessions.filter(s =>
       s.status !== 'ended' ||
       allCustom === 'true' ||
       week_start ||
       new Date(s.start_time).toDateString() === new Date().toDateString()
-    ); // Keep ended sessions for history views, and today's ended sessions for dashboard
+    );
 
     // Priority Sorting: Active first, then by start_time
-    finalSessions.sort((a, b) => {
+    filteredSessions.sort((a, b) => {
       if (a.status === 'active' && b.status !== 'active') return -1;
       if (a.status !== 'active' && b.status === 'active') return 1;
       
@@ -445,7 +527,7 @@ export const getSessions = async (req, res) => {
       return aTime.localeCompare(bTime);
     });
 
-    res.json(finalSessions);
+    res.json(filteredSessions);
   } catch (err) {
     console.error('[getSessions Maintenance Error]:', err.message);
     res.status(500).json({ message: err.message });

@@ -9,20 +9,42 @@ const initDb = async () => {
     await client.query('BEGIN');
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS organizations (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        slug VARCHAR(100) UNIQUE NOT NULL,
+        logo_url TEXT,
+        primary_color VARCHAR(20) DEFAULT '#105934',
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'inactive')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
+        password VARCHAR(255),
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
         college_id VARCHAR(100),
         role VARCHAR(20) NOT NULL DEFAULT 'teacher' CHECK (role IN ('teacher', 'admin')),
+        face_embedding JSONB,
+        is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
 
     // Ensure columns exist if table was already created
     await client.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS college_id VARCHAR(100);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL;
+      ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS face_embedding JSONB;
     `);
 
     await client.query(`
@@ -38,19 +60,29 @@ const initDb = async () => {
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
         email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255),
         roll_number VARCHAR(50) UNIQUE NOT NULL,
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL,
         college_id VARCHAR(100) NOT NULL,
         year INTEGER,
         stream VARCHAR(50),
         face_embedding JSONB,
+        is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMPTZ,
         status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE (roll_number, college_id)
+        UNIQUE (roll_number, organization_id)
       )
     `);
 
     // Ensure the stream column exists if the table was already created
     await client.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL;
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS password VARCHAR(255);
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6);
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMPTZ;
       ALTER TABLE students ADD COLUMN IF NOT EXISTS stream VARCHAR(50);
     `);
 
@@ -65,22 +97,59 @@ const initDb = async () => {
     await client.query(`
       CREATE TABLE IF NOT EXISTS subjects (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE,
-        code VARCHAR(50) UNIQUE
+        name VARCHAR(255) NOT NULL,
+        code VARCHAR(50),
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE
       )
     `);
 
-    // Ensure the code column exists if the table was created previously without it
+    // Add organization_id column and update constraints for subjects
     await client.query(`
-      ALTER TABLE subjects ADD COLUMN IF NOT EXISTS code VARCHAR(50) UNIQUE;
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='subjects' AND column_name='organization_id') THEN
+          ALTER TABLE subjects ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+        END IF;
+        
+        -- Drop old global unique constraint if it exists
+        ALTER TABLE subjects DROP CONSTRAINT IF EXISTS subjects_name_key;
+        
+        -- Add new composite unique constraint
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'subjects_name_org_key') THEN
+          ALTER TABLE subjects ADD CONSTRAINT subjects_name_org_key UNIQUE (name, organization_id);
+        END IF;
+      END $$;
     `);
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS classrooms (
         id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL UNIQUE DEFAULT 'Main Classroom',
-        camera_url VARCHAR(255) NOT NULL DEFAULT '0'
+        name VARCHAR(255) NOT NULL,
+        camera_url VARCHAR(255) NOT NULL DEFAULT '0',
+        camera_name VARCHAR(255),
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE
       )
+    `);
+    
+    await client.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='classrooms' AND column_name='organization_id') THEN
+          ALTER TABLE classrooms ADD COLUMN organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='classrooms' AND column_name='camera_name') THEN
+          ALTER TABLE classrooms ADD COLUMN camera_name VARCHAR(255);
+        END IF;
+
+        -- Drop old global unique constraint if it exists
+        ALTER TABLE classrooms DROP CONSTRAINT IF EXISTS classrooms_name_key;
+
+        -- Add new composite unique constraint
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'classrooms_name_org_key') THEN
+          ALTER TABLE classrooms ADD CONSTRAINT classrooms_name_org_key UNIQUE (name, organization_id);
+        END IF;
+      END $$;
     `);
 
     await client.query(`
@@ -173,6 +242,7 @@ const initDb = async () => {
         year VARCHAR(1) NOT NULL DEFAULT '1' CHECK (year IN ('1', '2', '3', '4')),
         stream VARCHAR(50) NOT NULL DEFAULT 'CSE',
         camera_id VARCHAR(50) NOT NULL DEFAULT '0',
+        camera_name VARCHAR(255),
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
@@ -249,16 +319,18 @@ const initDb = async () => {
     }
 
     await client.query(`
-      INSERT INTO subjects (name)
-      VALUES ('General Class')
-      ON CONFLICT (name) DO NOTHING
+      INSERT INTO subjects (name, organization_id)
+      VALUES ('General Class', NULL)
+      ON CONFLICT (name, organization_id) DO NOTHING
     `);
 
     await client.query(`
-      INSERT INTO classrooms (name, camera_url)
-      VALUES ('Main Classroom', '0')
-      ON CONFLICT DO NOTHING
+      INSERT INTO classrooms (name, camera_url, camera_name, organization_id)
+      VALUES ('Main Classroom', '0', 'Default Camera', NULL)
+      ON CONFLICT (name, organization_id) DO NOTHING
     `);
+
+    // --- SEED ORGANIZATIONS (DEPRECATED: Now uses Global Master List) ---
 
     await client.query('COMMIT');
     console.log('Database tables initialized successfully.');

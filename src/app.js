@@ -18,6 +18,7 @@ import subjectRoutes from "./routes/subject.routes.js";
 import teacherRoutes from "./routes/teacher.routes.js";
 import classroomRoutes from "./routes/classroom.routes.js";
 import timeSlotsRoutes from "./routes/time-slots.routes.js";
+import organizationRoutes from "./routes/organization.routes.js";
 import { apiErrorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
 // Setup directory paths for ES Modules
@@ -55,6 +56,7 @@ app.use("/api/subjects", subjectRoutes);
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/classrooms", classroomRoutes);
 app.use("/api/time_slots", timeSlotsRoutes);
+app.use("/api/organizations", organizationRoutes);
 
 // --- ERROR HANDLING ---
 // These must be at the very end to catch unresolved routes or crashes

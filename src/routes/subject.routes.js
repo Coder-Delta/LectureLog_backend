@@ -6,11 +6,13 @@ import {
   deleteSubject
 } from '../controllers/subject.controller.js';
 
+import { authenticateToken } from '../middleware/auth.middleware.js';
+
 const router = express.Router();
 
-router.get('/', getSubjects);
-router.post('/', addSubject);
-router.put('/:id', updateSubject);
-router.delete('/:id', deleteSubject);
+router.get('/', authenticateToken, getSubjects);
+router.post('/', authenticateToken, addSubject);
+router.put('/:id', authenticateToken, updateSubject);
+router.delete('/:id', authenticateToken, deleteSubject);
 
 export default router;

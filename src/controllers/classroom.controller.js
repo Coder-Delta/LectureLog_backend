@@ -4,8 +4,12 @@ import pool from '../config/database.config.js';
  * Get all classrooms
  */
 export const getClassrooms = async (req, res) => {
+  const { organization_id } = req.user;
   try {
-    const result = await pool.query('SELECT * FROM classrooms ORDER BY id ASC');
+    const result = await pool.query(
+      'SELECT * FROM classrooms WHERE organization_id = $1 ORDER BY id ASC',
+      [organization_id]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching classrooms:', err);
@@ -17,30 +21,32 @@ export const getClassrooms = async (req, res) => {
  * Add a new classroom
  */
 export const addClassroom = async (req, res) => {
-  const { name, camera_url } = req.body;
+  const { name, camera_url, camera_name } = req.body;
+  const { organization_id } = req.user;
+
   if (!name || !camera_url) {
     return res.status(400).json({ message: 'Classroom name and camera IDs are required' });
   }
 
   try {
-    // Validate camera uniqueness: each camera can only be assigned to one classroom
+    // Validate camera uniqueness within the organization
     const { rows: existing } = await pool.query(
-      "SELECT id, name FROM classrooms WHERE camera_url = $1",
-      [camera_url]
+      "SELECT id, name FROM classrooms WHERE camera_url = $1 AND organization_id = $2",
+      [camera_url, organization_id]
     );
     if (existing.length > 0) {
-      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
+      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'.` });
     }
 
     const result = await pool.query(
-      'INSERT INTO classrooms (name, camera_url) VALUES ($1, $2) RETURNING *',
-      [name, camera_url]
+      'INSERT INTO classrooms (name, camera_url, camera_name, organization_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, camera_url, camera_name, organization_id]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('Error adding classroom:', err);
     if (err.code === '23505') {
-      return res.status(409).json({ message: 'Classroom name already exists' });
+      return res.status(409).json({ message: 'Classroom name already exists in your institution' });
     }
     res.status(500).json({ message: 'Error adding classroom', error: err.message });
   }
@@ -51,36 +57,37 @@ export const addClassroom = async (req, res) => {
  */
 export const updateClassroom = async (req, res) => {
   const { id } = req.params;
-  const { name, camera_url } = req.body;
+  const { name, camera_url, camera_name } = req.body;
+  const { organization_id } = req.user;
 
   if (!name || !camera_url) {
     return res.status(400).json({ message: 'Classroom name and camera IDs are required' });
   }
 
   try {
-    // Validate camera uniqueness: each camera can only be assigned to one classroom (exclude self)
+    // Validate camera uniqueness within the organization (exclude self)
     const { rows: existing } = await pool.query(
-      "SELECT id, name FROM classrooms WHERE camera_url = $1 AND id != $2",
-      [camera_url, id]
+      "SELECT id, name FROM classrooms WHERE camera_url = $1 AND id != $2 AND organization_id = $3",
+      [camera_url, id, organization_id]
     );
     if (existing.length > 0) {
-      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'. Each camera can only belong to one classroom.` });
+      return res.status(400).json({ message: `Camera input '${camera_url}' is already assigned to classroom '${existing[0].name}'.` });
     }
 
     const result = await pool.query(
-      'UPDATE classrooms SET name = $1, camera_url = $2 WHERE id = $3 RETURNING *',
-      [name, camera_url, id]
+      'UPDATE classrooms SET name = $1, camera_url = $2, camera_name = $3 WHERE id = $4 AND organization_id = $5 RETURNING *',
+      [name, camera_url, camera_name, id, organization_id]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Classroom not found' });
+      return res.status(404).json({ message: 'Classroom not found in your institution' });
     }
 
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error updating classroom:', err);
     if (err.code === '23505') {
-      return res.status(409).json({ message: 'Classroom name already exists' });
+      return res.status(409).json({ message: 'Classroom name already exists in your institution' });
     }
     res.status(500).json({ message: 'Error updating classroom', error: err.message });
   }
@@ -91,12 +98,16 @@ export const updateClassroom = async (req, res) => {
  */
 export const deleteClassroom = async (req, res) => {
   const { id } = req.params;
+  const { organization_id } = req.user;
 
   try {
-    const result = await pool.query('DELETE FROM classrooms WHERE id = $1 RETURNING *', [id]);
+    const result = await pool.query(
+      'DELETE FROM classrooms WHERE id = $1 AND organization_id = $2 RETURNING *', 
+      [id, organization_id]
+    );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Classroom not found' });
+      return res.status(404).json({ message: 'Classroom not found in your institution' });
     }
 
     res.json({ message: 'Classroom deleted successfully', classroom: result.rows[0] });

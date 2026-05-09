@@ -1,11 +1,19 @@
 import express from "express";
-import { adminLogin, login, signup, studentLogin } from "../controllers/auth.controller.js";
+import { adminLogin, login, signup, studentLogin, claimInit, claimVerify, claimFinalize, adminSignupInit, adminSignupVerify } from "../controllers/auth.controller.js";
 
 const router = express.Router();
 
-router.post("/signup", signup);
 router.post("/login", login);
 router.post("/admin/login", adminLogin);
 router.post("/student/login", studentLogin);
+
+// Admin Dedicated Signup
+router.post("/admin-signup-init", adminSignupInit);
+router.post("/admin-signup-verify", adminSignupVerify);
+
+// Claim/Activation Flow
+router.post("/claim-init", claimInit);
+router.post("/claim-verify", claimVerify);
+router.post("/claim-finalize", claimFinalize);
 
 export default router;

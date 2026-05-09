@@ -1,4 +1,5 @@
 import pool from '../config/database.config.js';
+import bcrypt from 'bcryptjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -70,11 +71,14 @@ export const createSchedule = async (req, res) => {
       });
     }
 
+    const org_id = req.user.organization_id;
+
     const result = await pool.query(
-      'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-      [subject_id, classroom_id, final_teacher_id, day_of_week, start_time, end_time, year || '1', camera_id || '0', stream || 'CSE']
+      'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      [subject_id, classroom_id, final_teacher_id, day_of_week, start_time, end_time, year || '1', camera_id || '0', stream || 'CSE', org_id]
     );
-    res.status(201).json({ message: 'Schedule created', id: result.rows[0].id });
+    res.status(201).json({ message: 'Schedule created successfully', id: result.rows[0].id });
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -91,7 +95,7 @@ export const getSchedules = async (req, res) => {
         INSERT INTO timetable_week_entries (
           week_start, entry_date, source_type, source_id, action,
           subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-          year, stream, camera_id, created_by
+          year, stream, camera_id, camera_name, created_by
         )
         SELECT
           $1::date,
@@ -118,8 +122,10 @@ export const getSchedules = async (req, res) => {
           s.year,
           s.stream,
           s.camera_id,
+          c.camera_name,
           $2
         FROM schedules s
+        JOIN classrooms c ON s.classroom_id = c.id
         WHERE NOT EXISTS (
           SELECT 1 FROM timetable_week_entries twe
           WHERE twe.week_start = $1::date
@@ -131,7 +137,7 @@ export const getSchedules = async (req, res) => {
     }
 
     let query = `
-      SELECT s.*, sub.name as subject_name, u.name as teacher_name, c.name as classroom_name,
+      SELECT s.*, sub.name as subject_name, u.name as teacher_name, c.name as classroom_name, c.camera_name,
              CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled,
              false as is_deleted_history,
              false as is_snapshot_history,
@@ -158,6 +164,15 @@ export const getSchedules = async (req, res) => {
       conditions.push(`s.stream = $${params.length}`);
     }
 
+    // Exclude schedules that have been marked as 'deleted' for this specific week's snapshot
+    conditions.push(`NOT EXISTS (
+      SELECT 1 FROM timetable_week_entries twe 
+      WHERE twe.week_start = $1::date 
+        AND twe.source_type = 'regular' 
+        AND twe.source_id = s.id 
+        AND twe.action = 'deleted'
+    )`);
+
     if (conditions.length > 0) {
       query += ` WHERE ` + conditions.join(' AND ');
     }
@@ -166,10 +181,10 @@ export const getSchedules = async (req, res) => {
 
     let historyQuery = `
       SELECT twe.id, twe.source_id, twe.subject_id, twe.classroom_id, twe.teacher_id,
-             twe.day_of_week, twe.start_time, twe.end_time, twe.year, twe.stream, twe.camera_id,
+             twe.day_of_week, twe.start_time, twe.end_time, twe.year, twe.stream, twe.camera_id, twe.camera_name,
              sub.name as subject_name, u.name as teacher_name, c.name as classroom_name,
              CASE WHEN twe.action = 'active' THEN false ELSE true END as is_cancelled,
-             CASE WHEN twe.action = 'active' THEN false ELSE true END as is_deleted_history,
+             CASE WHEN twe.action = 'deleted' THEN true ELSE false END as is_deleted_history,
              true as is_snapshot_history,
              twe.source_type,
              twe.action as history_action
@@ -178,19 +193,9 @@ export const getSchedules = async (req, res) => {
       LEFT JOIN users u ON twe.teacher_id = u.id
       LEFT JOIN classrooms c ON twe.classroom_id = c.id
       WHERE twe.week_start = $1::date
-        AND NOT EXISTS (
-          SELECT 1 FROM schedules live
-          WHERE twe.source_type = 'regular' AND live.id = twe.source_id
-        )
-        AND NOT (
-          twe.action = 'active'
-          AND EXISTS (
-            SELECT 1 FROM timetable_week_entries later
-            WHERE later.week_start = twe.week_start
-              AND later.source_type = twe.source_type
-              AND later.source_id = twe.source_id
-              AND later.action IN ('cancelled', 'deleted')
-          )
+        AND (
+          twe.action IN ('deleted', 'cancelled')
+          OR twe.source_type = 'custom'
         )
     `;
     const historyParams = [targetWeekStartStr];
@@ -300,76 +305,19 @@ export const deleteSchedule = async (req, res) => {
     const schedule = rows[0];
     const targetWeekStart = getWeekStartDate(weekStartInput);
     const targetWeekStartStr = toDateOnly(targetWeekStart);
+    const userRole = req.user?.role?.toLowerCase();
 
-    if (!isFutureWeek(targetWeekStart)) {
-      await pool.query(`
-        INSERT INTO timetable_week_entries (
-          week_start, entry_date, source_type, source_id, action,
-          subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-          year, stream, camera_id, created_by
-        )
-        VALUES ($1, $2, 'regular', $3, 'deleted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-      `, [
-        targetWeekStartStr,
-        toDateOnly(getDateForDay(targetWeekStart, schedule.day_of_week)),
-        schedule.id,
-        schedule.subject_id,
-        schedule.classroom_id,
-        schedule.teacher_id,
-        schedule.day_of_week,
-        schedule.start_time,
-        schedule.end_time,
-        schedule.year,
-        schedule.stream,
-        schedule.camera_id,
-        req.user?.id || null,
-      ]);
-    }
-
-    await pool.query('DELETE FROM schedules WHERE id = $1', [id]);
-    res.json({ message: 'Schedule deleted' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-export const cancelSchedule = async (req, res) => {
-  const { id } = req.params;
-  const { college_id } = req.body;
-  const teacher_id = req.user.id;
-
-  try {
-    const { rows: schedules } = await pool.query('SELECT * FROM schedules WHERE id = $1 AND teacher_id = $2', [id, teacher_id]);
-    if (schedules.length === 0) {
-      return res.status(404).json({ message: 'Schedule not found or unauthorized' });
-    }
-
-    const { rows: users } = await pool.query('SELECT college_id FROM users WHERE id = $1', [teacher_id]);
-    if (users.length === 0 || users[0].college_id !== college_id) {
-      return res.status(403).json({ message: 'Invalid College ID' });
-    }
-
-    await pool.query('INSERT INTO cancelled_classes (schedule_id, cancel_date) VALUES ($1, CURRENT_DATE) ON CONFLICT DO NOTHING', [id]);
-
-    // Force-kill any active session that was auto-started for this routine today
-    const schedule = schedules[0];
-    const targetWeekStart = getWeekStartDate();
+    // ── Record in History Snapshot ──
     await pool.query(`
       INSERT INTO timetable_week_entries (
         week_start, entry_date, source_type, source_id, action,
         subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-        year, stream, camera_id, created_by
+        year, stream, camera_id, camera_name, created_by
       )
-      SELECT $1, CURRENT_DATE, 'regular', $2, 'cancelled', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-      WHERE NOT EXISTS (
-        SELECT 1 FROM timetable_week_entries
-        WHERE week_start = $1::date
-          AND source_type = 'regular'
-          AND source_id = $2
-          AND action = 'cancelled'
-      )
+      VALUES ($1, $2, 'regular', $3, 'deleted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     `, [
-      toDateOnly(targetWeekStart),
+      targetWeekStartStr,
+      toDateOnly(getDateForDay(targetWeekStart, schedule.day_of_week)),
       schedule.id,
       schedule.subject_id,
       schedule.classroom_id,
@@ -380,24 +328,98 @@ export const cancelSchedule = async (req, res) => {
       schedule.year,
       schedule.stream,
       schedule.camera_id,
+      schedule.camera_name,
+      req.user?.id || null,
+    ]);
+
+    if (userRole === 'admin') {
+      await pool.query('DELETE FROM schedules WHERE id = $1', [id]);
+      res.json({ message: 'Routine updated: Class permanently removed.', role: 'admin' });
+    } else {
+      res.json({ message: 'Class removed from this week only.', role: 'teacher' });
+    }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const cancelSchedule = async (req, res) => {
+  const { id } = req.params;
+  const { password, cancel_date, week_start } = req.body;
+  const teacher_id = req.user.id;
+
+  try {
+    const { rows: schedules } = await pool.query('SELECT * FROM schedules WHERE id = $1 AND teacher_id = $2', [id, teacher_id]);
+    if (schedules.length === 0) {
+      return res.status(404).json({ message: 'Schedule not found or unauthorized' });
+    }
+
+    const { rows: users } = await pool.query('SELECT password FROM users WHERE id = $1', [teacher_id]);
+    if (users.length === 0) return res.status(404).json({ message: 'Teacher not found' });
+    
+    const isMatch = await bcrypt.compare(password, users[0].password);
+    if (!isMatch) {
+      return res.status(403).json({ message: 'Invalid password. Cancellation denied.' });
+    }
+
+    const finalCancelDate = cancel_date || toDateOnly(new Date());
+    const finalWeekStart = week_start || toDateOnly(getWeekStartDate());
+
+    await pool.query('INSERT INTO cancelled_classes (schedule_id, cancel_date) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, finalCancelDate]);
+
+    // Snapshot entry for the specific week
+    const schedule = schedules[0];
+    await pool.query(`
+      INSERT INTO timetable_week_entries (
+        week_start, entry_date, source_type, source_id, action,
+        subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
+        year, stream, camera_id, camera_name, created_by
+      )
+      SELECT $1, $2, 'regular', $3, 'cancelled', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      WHERE NOT EXISTS (
+        SELECT 1 FROM timetable_week_entries
+        WHERE week_start = $1::date
+          AND entry_date = $2::date
+          AND source_type = 'regular'
+          AND source_id = $3
+          AND action = 'cancelled'
+      )
+    `, [
+      finalWeekStart,
+      finalCancelDate,
+      schedule.id,
+      schedule.subject_id,
+      schedule.classroom_id,
+      schedule.teacher_id,
+      schedule.day_of_week,
+      schedule.start_time,
+      schedule.end_time,
+      schedule.year,
+      schedule.stream,
+      schedule.camera_id,
+      schedule.camera_name,
       teacher_id,
     ]);
 
-    const { rows: activeSessions } = await pool.query(`
-      DELETE FROM sessions 
-      WHERE subject_id = $1 AND classroom_id = $2 AND teacher_id = $3
-      AND start_time::date = CURRENT_DATE
-      AND (start_time::time)::text LIKE $4 || '%'
-      AND is_custom = false
-      RETURNING id
-    `, [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, schedule.start_time]);
+    // If it's today, stop the active session by marking it cancelled (don't delete history)
+    if (finalCancelDate === toDateOnly(new Date())) {
+      const { rows: activeSessions } = await pool.query(`
+        UPDATE sessions 
+        SET status = 'cancelled'
+        WHERE subject_id = $1 AND classroom_id = $2 AND teacher_id = $3
+        AND start_time::date = CURRENT_DATE
+        AND (start_time::time)::text LIKE $4 || '%'
+        AND is_custom = false
+        RETURNING id
+      `, [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, schedule.start_time]);
 
-    const io = req.app.get('io');
-    if (io && activeSessions.length > 0) {
-      activeSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+      const io = req.app.get('io');
+      if (io && activeSessions.length > 0) {
+        activeSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+      }
     }
 
-    res.json({ message: 'Class cancelled successfully for today' });
+    res.json({ message: 'Class cancelled successfully for ' + finalCancelDate });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

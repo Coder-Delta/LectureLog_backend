@@ -44,8 +44,9 @@ export const registerStudent = async (req, res) => {
     });
 
     // 3. Save to PostgreSQL (Including the face vector and Cloudinary info)
+    const organization_id = req.user.organization_id;
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, image_url, cloudinary_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, image_url, cloudinary_id, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
       [
         name,
         email,
@@ -55,7 +56,8 @@ export const registerStudent = async (req, res) => {
         stream,
         JSON.stringify(embedding),
         cloudinaryResponse.secure_url,
-        cloudinaryResponse.public_id
+        cloudinaryResponse.public_id,
+        organization_id
       ]
     );
     const studentId = result.rows[0].id;

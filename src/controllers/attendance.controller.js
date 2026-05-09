@@ -52,7 +52,7 @@ export const getStudentAttendance = async (req, res) => {
   const { id } = req.params;
   try {
     const { rows: attendance } = await pool.query(`
-      SELECT a.*, s.start_time, sub.name as subject_name
+      SELECT a.*, s.start_time, sub.name as subject_name, s.subject_id
       FROM attendance a
       JOIN sessions s ON a.session_id = s.id
       JOIN subjects sub ON s.subject_id = sub.id

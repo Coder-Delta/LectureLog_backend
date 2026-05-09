@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import pool from '../config/database.config.js';
 import axios from 'axios';
+import { finalizeSession } from '../controllers/session.controller.js';
 
 export const initScheduler = (app) => {
   // Run every minute
@@ -104,10 +105,10 @@ export const initScheduler = (app) => {
 
       if (expiredCustom.length > 0) {
         const io = app.get('io');
-        const ids = expiredCustom.map(s => s.id);
-        console.log(`[Scheduler] Auto-removing ${ids.length} expired custom session(s).`);
-        if (io) ids.forEach(id => io.emit('session_ended', { id }));
-        await pool.query('DELETE FROM sessions WHERE id = ANY($1)', [ids]);
+        console.log(`[Scheduler] Finalizing ${expiredCustom.length} expired custom session(s).`);
+        for (const s of expiredCustom) {
+          await finalizeSession(s.id, io);
+        }
       }
 
       // 3b. End/delete NON-CUSTOM sessions that have reached their end_time or are zombie (started on previous day)
@@ -123,17 +124,10 @@ export const initScheduler = (app) => {
 
       if (endingSessions.length > 0) {
         const io = app.get('io');
-        const sessionIds = endingSessions.map(s => s.id);
-
-        console.log(`[Scheduler] Cleaning up ${sessionIds.length} expired non-custom sessions.`);
-
-        if (io) {
-          sessionIds.forEach(id => {
-            io.emit('session_ended', { id });
-          });
+        console.log(`[Scheduler] Finalizing ${endingSessions.length} expired non-custom sessions.`);
+        for (const s of endingSessions) {
+          await finalizeSession(s.id, io);
         }
-
-        await pool.query('DELETE FROM sessions WHERE id = ANY($1)', [sessionIds]);
       }
 
     } catch (err) {

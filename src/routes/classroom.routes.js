@@ -6,11 +6,13 @@ import {
   deleteClassroom
 } from '../controllers/classroom.controller.js';
 
+import { authenticateToken } from '../middleware/auth.middleware.js';
+
 const router = express.Router();
 
-router.get('/', getClassrooms);
-router.post('/', addClassroom);
-router.put('/:id', updateClassroom);
-router.delete('/:id', deleteClassroom);
+router.get('/', authenticateToken, getClassrooms);
+router.post('/', authenticateToken, addClassroom);
+router.put('/:id', authenticateToken, updateClassroom);
+router.delete('/:id', authenticateToken, deleteClassroom);
 
 export default router;
