@@ -49,14 +49,17 @@ export const claimInit = async (req, res) => {
         from: 'LectureLog <onboarding@resend.dev>',
         to: email,
         subject: 'LectureLog - Your Verification Code',
-        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-          <h2 style="color: #105934;">LectureLog Verification</h2>
+        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="https://res.cloudinary.com/dmi7vzu8w/image/upload/v1778328482/Picsart_26-05-07_07-29-20-114_v3en0e.jpg" alt="LectureLog" style="width: 120px; border-radius: 10px;" />
+          </div>
+          <h2 style="color: #105934; text-align: center;">LectureLog Verification</h2>
           <p>Hello,</p>
           <p>Your verification code for LectureLog is:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0;">${otp}</div>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0; text-align: center; background: #f0fdf4; padding: 10px; border-radius: 8px;">${otp}</div>
           <p>This code will expire in 10 minutes.</p>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #666;">If you didn't request this, you can safely ignore this email.</p>
+          <p style="font-size: 12px; color: #666; text-align: center;">If you didn't request this, you can safely ignore this email.</p>
         </div>`
       });
     }
@@ -107,12 +110,17 @@ export const adminSignupInit = async (req, res) => {
         from: 'LectureLog <onboarding@resend.dev>',
         to: email,
         subject: 'Welcome to LectureLog - Verify Your College',
-        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-          <h2 style="color: #105934;">Welcome to LectureLog!</h2>
+        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <img src="https://res.cloudinary.com/dmi7vzu8w/image/upload/v1778328482/Picsart_26-05-07_07-29-20-114_v3en0e.jpg" alt="LectureLog" style="width: 120px; border-radius: 10px;" />
+          </div>
+          <h2 style="color: #105934; text-align: center;">Welcome to LectureLog!</h2>
           <p>Thank you for registering <strong>${orgName}</strong>.</p>
           <p>To complete your college registration, please use the following verification code:</p>
-          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0;">${otp}</div>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0; text-align: center; background: #f0fdf4; padding: 10px; border-radius: 8px;">${otp}</div>
           <p>This code will expire in 10 minutes.</p>
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+          <p style="font-size: 12px; color: #666; text-align: center;">Connecting institutions to the future.</p>
         </div>`
       });
     }
