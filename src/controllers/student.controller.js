@@ -24,15 +24,28 @@ export const registerStudent = async (req, res) => {
   }
 
   try {
-    // 1. Get embedding from AI Service first to ensure photo is valid
-    const aiFormData = new FormData();
-    aiFormData.append('file', fs.createReadStream(imageFile.path));
+    let embedding = null;
 
-    const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-      headers: aiFormData.getHeaders(),
-    });
+    // 1. Check if embedding is already provided (from Electron App)
+    if (req.body.face_embedding) {
+      try {
+        embedding = JSON.parse(req.body.face_embedding);
+      } catch (e) {
+        embedding = req.body.face_embedding;
+      }
+    }
 
-    const embedding = aiResponse.data.embedding;
+    // 2. If no embedding provided, get it from AI Service (Legacy/Web flow)
+    if (!embedding) {
+      const aiFormData = new FormData();
+      aiFormData.append('file', fs.createReadStream(imageFile.path));
+
+      const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+        headers: aiFormData.getHeaders(),
+      });
+
+      embedding = aiResponse.data.embedding;
+    }
 
     if (!embedding || !Array.isArray(embedding)) {
       throw new Error('AI Service failed to generate a valid face embedding.');
@@ -178,15 +191,29 @@ export const updateStudent = async (req, res) => {
     let queryParams = [name, email, roll_number, college_id, year, stream];
     
     if (imageFile) {
-      // 1. Get new embedding from AI Service
-      const aiFormData = new FormData();
-      aiFormData.append('file', fs.createReadStream(imageFile.path));
+      let embedding = null;
 
-      const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-        headers: aiFormData.getHeaders(),
-      });
+      // 1. Check if embedding is already provided
+      if (req.body.face_embedding) {
+        try {
+          embedding = JSON.parse(req.body.face_embedding);
+        } catch (e) {
+          embedding = req.body.face_embedding;
+        }
+      }
 
-      const embedding = aiResponse.data.embedding;
+      // 2. If no embedding provided, get it from AI Service
+      if (!embedding) {
+        const aiFormData = new FormData();
+        aiFormData.append('file', fs.createReadStream(imageFile.path));
+
+        const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+          headers: aiFormData.getHeaders(),
+        });
+
+        embedding = aiResponse.data.embedding;
+      }
+
       if (!embedding || !Array.isArray(embedding)) {
         throw new Error('AI Service failed to generate a valid face embedding.');
       }
