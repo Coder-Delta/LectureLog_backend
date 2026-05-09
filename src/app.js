@@ -28,7 +28,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 // --- GLOBAL MIDDLEWARE ---
-app.use(cors()); // Allow cross-origin requests from frontend
+const corsOptions = {
+  origin: process.env.FRONTEND_URL || "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+};
+app.use(cors(corsOptions));
 app.use(helmet({ crossOriginResourcePolicy: false })); // Security headers (modified to allow image serving)
 app.use(morgan("dev")); // HTTP request logger
 app.use(express.json({ limit: "10mb" })); // Parse JSON payloads

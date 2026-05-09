@@ -26,8 +26,13 @@ const startServer = async () => {
     console.log("Connected to PostgreSQL database.");
 
     initScheduler(app);
-    initAIServiceMonitor(app);
-    initCameraBackend();
+    
+    if (process.env.DISABLE_AI_SPAWN !== 'true') {
+      initAIServiceMonitor(app);
+      initCameraBackend();
+    } else {
+      console.log('AI Spawning is disabled (Production Mode).');
+    }
 
     server.listen(PORT, () => {
       console.log(`LectureLog backend running on port ${PORT}`);
