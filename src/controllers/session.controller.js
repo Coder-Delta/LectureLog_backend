@@ -499,18 +499,24 @@ export const getSessions = async (req, res) => {
     // ── STEP 4: Merge and Audit ──
     const allSessions = [...dbSessions, ...upcomingRoutine];
 
-    // Final Guard Auditor
+    // Final Guard Auditor & "Future Ghost" Reaper
     const finalSessions = [];
     for (const s of allSessions) {
       let updatedS = { ...s };
+      const sessionStart = new Date(s.start_time);
+      const sessionEnd = new Date(s.end_time);
+      
+      // REAPER: If an active session is clearly in the future (due to previous timezone bugs), kill it
+      const isFutureGhost = s.status === 'active' && sessionStart > new Date(now.getTime() + 60000); // 1 min buffer
+      
       if (s.status === 'active') {
-        const sessionEnd = new Date(s.end_time);
         const isPast = typeof s.end_time === 'string' 
           ? s.end_time < currentTimeStr 
           : now > sessionEnd;
           
-        if (isPast) {
+        if (isPast || isFutureGhost) {
           if (!String(s.id).startsWith('routine_')) {
+            console.log(`[REAPER] Terminating ${isFutureGhost ? 'Future Ghost' : 'Expired'} session: ${s.id}`);
             await finalizeSession(s.id, io);
           }
           updatedS.status = 'ended';
