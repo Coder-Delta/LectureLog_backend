@@ -327,17 +327,18 @@ export const getSessions = async (req, res) => {
       }
     }
 
-    // 3. Check routine for current sessions and auto-start them
+    // 3. Check timetable for current sessions and auto-start them
     const { rows: currentRoutine } = await pool.query(`
-      SELECT s.*, sub.name as subject_name, c.name as classroom_name 
-      FROM schedules s
-      JOIN subjects sub ON s.subject_id = sub.id
-      JOIN classrooms c ON s.classroom_id = c.id
-      LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
-      WHERE s.day_of_week = $1 
-        AND s.start_time <= $2::time 
-        AND s.end_time > $2::time
-        AND cc.id IS NULL
+      SELECT t.*, sub.name as subject_name, c.name as classroom_name 
+      FROM timetable_week_entries t
+      JOIN subjects sub ON t.subject_id = sub.id
+      JOIN classrooms c ON t.classroom_id = c.id
+      WHERE t.day_of_week = $1 
+        AND t.start_time <= $2::time 
+        AND t.end_time > $2::time
+        AND t.action = 'active'
+        AND t.week_start <= CURRENT_DATE 
+        AND (t.week_start + interval '6 days') >= CURRENT_DATE
     `, [currentDay, currentTimeStr]);
 
     for (const routine of currentRoutine) {

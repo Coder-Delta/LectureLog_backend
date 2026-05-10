@@ -12,14 +12,17 @@ export const initScheduler = (app) => {
     const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00
 
     try {
-      // Find schedules for this time - using explicit time cast
+      // Find timetable entries for this time
       const { rows: schedules } = await pool.query(`
-        SELECT s.*, sub.name as subject_name 
-        FROM schedules s
-        JOIN subjects sub ON s.subject_id = sub.id
-        WHERE s.day_of_week = $1 
-          AND s.start_time <= $2::time 
-          AND s.end_time >= $2::time
+        SELECT t.*, sub.name as subject_name 
+        FROM timetable_week_entries t
+        JOIN subjects sub ON t.subject_id = sub.id
+        WHERE t.day_of_week = $1 
+          AND t.start_time <= $2::time 
+          AND t.end_time >= $2::time
+          AND t.action = 'active'
+          AND t.week_start <= CURRENT_DATE 
+          AND (t.week_start + interval '6 days') >= CURRENT_DATE
       `, [currentDay, currentTime]);
 
       if (schedules.length > 0) {
