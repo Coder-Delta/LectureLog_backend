@@ -393,8 +393,7 @@ export const getSessions = async (req, res) => {
 
     let sessionQuery = `
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
-             TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as start_time,
-             TO_CHAR(s.end_time AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI:SS') as end_time,
+             s.start_time, s.end_time,
              sub.name as subject_name, c.camera_url, c.camera_name, c.name as classroom_name, u.name as teacher_name
       FROM sessions s
       LEFT JOIN subjects sub ON s.subject_id = sub.id
