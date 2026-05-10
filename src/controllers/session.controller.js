@@ -282,85 +282,19 @@ export const cancelSession = async (req, res) => {
 };
 
 export const getSessions = async (req, res) => {
-  const { year, stream, allCustom, week_start } = req.query; // allCustom=true → Sessions page: show all future custom sessions
-  const io = req.app.get('io');
-
+  const { year, stream, allCustom, week_start } = req.query;
 
   try {
-    // ── STEP 1: Auto-Start/End Maintenance ──
-    // Single source of truth: all time comparisons use IST
-    const istDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTimeStr = `${String(istDate.getHours()).padStart(2,'0')}:${String(istDate.getMinutes()).padStart(2,'0')}:${String(istDate.getSeconds()).padStart(2,'0')}`;
-    const istDateStr = `${istDate.getFullYear()}-${String(istDate.getMonth()+1).padStart(2,'0')}-${String(istDate.getDate()).padStart(2,'0')}`;
-    const now = new Date(); // UTC for DB expiry comparisons
+    // 1. Get current IST context for virtual routine generation
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const now = new Date();
+    const istDate = new Date(now.getTime() + istOffset);
+    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    const istDateStr = istDate.toISOString().split('T')[0];
+    const currentTimeHM = istDate.toISOString().split('T')[1].substring(0, 5);
 
-
-    // 1. Mark custom sessions that have ended
-    const { rows: expiredCustomSessions } = await pool.query(`
-      UPDATE sessions SET status = 'ended'
-      WHERE is_custom = true AND status IN ('active', 'scheduled') AND end_time <= NOW()
-      RETURNING id
-    `);
-    for (const sess of expiredCustomSessions) await finalizeSession(sess.id, io);
-
-    // 2. Mark past-due non-custom sessions as ended using IST time
-    const { rows: endingSessions } = await pool.query(`
-      UPDATE sessions SET status = 'ended'
-      WHERE status = 'active' AND is_custom = false
-        AND (end_time AT TIME ZONE 'Asia/Kolkata')::time <= $1::time
-      RETURNING id
-    `, [currentTimeStr]);
-    for (const sess of endingSessions) await finalizeSession(sess.id, io);
-
-    // 3. Auto-start routine sessions — check existing using IST-converted times to avoid duplicates
-    const { rows: currentRoutine } = await pool.query(`
-      SELECT t.*, sub.name as subject_name, c.name as classroom_name 
-      FROM timetable_week_entries t
-      JOIN subjects sub ON t.subject_id = sub.id
-      JOIN classrooms c ON t.classroom_id = c.id
-      WHERE t.day_of_week = $1 
-        AND t.start_time <= $2::time 
-        AND t.end_time > $2::time
-        AND t.action = 'active'
-        AND t.week_start <= CURRENT_DATE 
-        AND (t.week_start + interval '6 days') >= CURRENT_DATE
-    `, [currentDay, currentTimeStr]);
-
-    for (const routine of currentRoutine) {
-      // Check for existing session using IST-converted time to prevent duplicates
-      const { rows: existing } = await pool.query(`
-        SELECT id FROM sessions 
-        WHERE subject_id = $1 AND classroom_id = $2 
-          AND (start_time AT TIME ZONE 'Asia/Kolkata')::date = $3::date
-          AND (start_time AT TIME ZONE 'Asia/Kolkata')::time BETWEEN ($4::time - interval '5 minutes') AND ($4::time + interval '5 minutes')
-          AND status = 'active'
-      `, [routine.subject_id, routine.classroom_id, istDateStr, routine.start_time]);
-
-      if (existing.length === 0) {
-        // Store with explicit IST offset — Postgres converts to UTC for storage correctly
-        const { rows: inserted } = await pool.query(`
-          INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
-          VALUES ($1, $2, $3,
-            ($4 || 'T' || $5 || '+05:30')::timestamptz,
-            ($4 || 'T' || $6 || '+05:30')::timestamptz,
-            'active', $7, $8, false)
-          RETURNING *
-        `, [routine.subject_id, routine.classroom_id, routine.teacher_id, 
-            istDateStr, routine.start_time, routine.end_time, 
-            routine.year, routine.stream]);
-
-        if (io) {
-          io.emit('session_started', { ...inserted[0], subject_name: routine.subject_name, classroom_name: routine.classroom_name });
-          console.log(`[AUTO-START] Activated: ${routine.subject_name} at ${routine.start_time} IST`);
-          axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
-        }
-      }
-    }
-
-    // ── STEP 2: Fetch and Return All Sessions ──
+    // ── STEP 1: Fetch Real Database Sessions ──
     const { startOfWeek, endOfWeek } = getCurrentWeekRange(week_start);
-
     const customDateClause = allCustom === 'true' ? `TRUE` : `s.start_time >= $1 AND s.start_time <= $2`; 
     const statusClause = allCustom === 'true' || week_start
       ? `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`
@@ -371,25 +305,24 @@ export const getSessions = async (req, res) => {
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
              s.start_time, s.end_time,
              sub.name as subject_name, c.camera_url, c.camera_name, c.name as classroom_name, u.name as teacher_name
-      FROM sessions s
-      LEFT JOIN subjects sub ON s.subject_id = sub.id
-      LEFT JOIN classrooms c ON s.classroom_id = c.id
-      LEFT JOIN users u ON s.teacher_id = u.id
-      WHERE (
-        (s.is_custom = false AND ${statusClause})
-        OR
-        (s.is_custom = true AND ${statusClause} AND ${customDateClause})
-      )
+       FROM sessions s
+       LEFT JOIN subjects sub ON s.subject_id = sub.id
+       LEFT JOIN classrooms c ON s.classroom_id = c.id
+       LEFT JOIN users u ON s.teacher_id = u.id
+       WHERE (
+         (s.is_custom = false AND ${statusClause})
+         OR
+         (s.is_custom = true AND ${statusClause} AND ${customDateClause})
+       )
     `;
     if (year) { sessionParams.push(year); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
     if (stream) { sessionParams.push(stream); sessionQuery += ` AND s.stream = $${sessionParams.length}`; }
 
     const { rows: dbSessions } = await pool.query(sessionQuery, sessionParams);
 
-    // ── STEP 3: Fetch Today's Routine (virtual sessions for UI) ──
+    // ── STEP 2: Fetch Today's Routine (virtual sessions for UI) ──
     let scheduleQuery = `
-      SELECT t.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name,
-             false as is_cancelled
+      SELECT t.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
       FROM timetable_week_entries t
       JOIN subjects sub ON t.subject_id = sub.id
       LEFT JOIN classrooms c ON t.classroom_id = c.id
@@ -407,25 +340,21 @@ export const getSessions = async (req, res) => {
     // Convert Routine to Session format, deduplicating against real DB sessions
     const upcomingRoutine = todayRoutine
       .filter(routine => {
-        if (routine.end_time < currentTimeStr && allCustom !== 'true') return false;
-
-        // Check if a real DB session already exists for this routine slot (timezone-safe)
+        // Filter out routine slots that already have a real DB session
         const alreadyExists = dbSessions.some(sess => {
           if (sess.is_custom) return false;
           if (sess.subject_id !== routine.subject_id) return false;
-          if (sess.classroom_id !== routine.classroom_id) return false;
-          // Compare IST times: convert DB timestamptz to IST HH:MM
+          
           const sessISTTime = new Date(sess.start_time).toLocaleTimeString('en-US', { 
             timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit' 
           });
-          const routineTime = routine.start_time.substring(0, 5); // HH:MM
-          return sessISTTime.startsWith(routineTime) &&
-            ['active', 'scheduled', 'ended', 'cancelled'].includes(sess.status);
+          const routineTime = routine.start_time.substring(0, 5);
+          return sessISTTime === routineTime && sess.status !== 'cancelled';
         });
         return !alreadyExists;
       })
       .map(routine => {
-        const isPast = routine.end_time < currentTimeStr;
+        const isPast = routine.end_time.substring(0, 5) < currentTimeHM;
         return {
           id: `routine_${routine.id}`,
           subject_id: routine.subject_id,
@@ -436,47 +365,25 @@ export const getSessions = async (req, res) => {
           teacher_name: routine.teacher_name,
           camera_name: routine.camera_name,
           camera_url: routine.camera_url,
-          // Use IST date string to avoid UTC date mismatch  
           start_time: `${istDateStr}T${routine.start_time}+05:30`,
           end_time: `${istDateStr}T${routine.end_time}+05:30`,
           year: routine.year,
           stream: routine.stream,
-          status: routine.is_cancelled ? 'cancelled' : (isPast ? 'ended' : 'scheduled'),
+          status: isPast ? 'ended' : 'scheduled',
           is_custom: false
         };
       });
 
-    // ── STEP 4: Merge and Simple Audit (no aggressive reaper) ──
-    const allSessions = [...dbSessions, ...upcomingRoutine];
-    const finalSessions = [];
+    const finalSessions = [...dbSessions, ...upcomingRoutine];
 
-    for (const s of allSessions) {
-      let updatedS = { ...s };
-      // Only end sessions whose end_time (in IST) has passed
-      if (s.status === 'active' && !String(s.id).startsWith('routine_')) {
-        const endIST = new Date(s.end_time).toLocaleTimeString('en-US', {
-          timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-        if (endIST < currentTimeStr) {
-          await finalizeSession(s.id, io);
-          updatedS.status = 'ended';
-        }
-      }
-      finalSessions.push(updatedS);
-    }
-
-    const filteredSessions = finalSessions.filter(s =>
-      s.status !== 'ended' || allCustom === 'true' || week_start ||
-      new Date(s.start_time).toDateString() === new Date().toDateString()
-    );
-
-    filteredSessions.sort((a, b) => {
+    // Sort: Active first, then by start time
+    finalSessions.sort((a, b) => {
       if (a.status === 'active' && b.status !== 'active') return -1;
       if (a.status !== 'active' && b.status === 'active') return 1;
       return String(a.start_time).localeCompare(String(b.start_time));
     });
 
-    res.json(filteredSessions);
+    res.json(finalSessions);
   } catch (err) {
     console.error('[getSessions Error]:', err.message);
     res.status(500).json({ message: err.message });

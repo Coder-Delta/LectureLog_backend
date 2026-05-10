@@ -4,145 +4,112 @@ import axios from 'axios';
 import { finalizeSession } from '../controllers/session.controller.js';
 
 export const initScheduler = (app) => {
+  console.log('[Scheduler] Initializing background maintenance service...');
+
   // Run every minute
   cron.schedule('* * * * *', async () => {
-    // Get current time in India (IST)
-    const istDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTime = istDate.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00 IST
+    // 1. Define 'now' in UTC for database comparisons
+    const now = new Date();
+    
+    // 2. Get current time in India (IST) reliably
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(now.getTime() + istOffset);
+    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    const istDateStr = istDate.toISOString().split('T')[0];
+    const currentTimeStr = istDate.toISOString().split('T')[1].substring(0, 8); // HH:MM:SS
+    const currentTimeHM = currentTimeStr.substring(0, 5); // HH:MM
 
     try {
-      // Find timetable entries for this time
+      // --- STEP A: Auto-Start Routine Sessions ---
+      // Find timetable entries that SHOULD be active right now
+      // We look for any routine slot where current time is between start and end
       const { rows: schedules } = await pool.query(`
         SELECT t.*, sub.name as subject_name 
         FROM timetable_week_entries t
         JOIN subjects sub ON t.subject_id = sub.id
         WHERE t.day_of_week = $1 
           AND t.start_time <= $2::time 
-          AND t.end_time >= $2::time
+          AND t.end_time > $2::time
           AND t.action = 'active'
-          AND t.week_start <= CURRENT_DATE 
-          AND (t.week_start + interval '6 days') >= CURRENT_DATE
-      `, [currentDay, currentTime]);
+          AND t.week_start <= $3::date 
+          AND (t.week_start + interval '6 days') >= $3::date
+      `, [currentDay, currentTimeStr, istDateStr]);
 
-      if (schedules.length > 0) {
-        console.log(`[Scheduler] Found ${schedules.length} scheduled classes for ${currentDay} ${currentTime}`);
-      }
-
-      // 1. Start automated sessions from routine
       for (const schedule of schedules) {
-        // Check if session already exists for this specific schedule slot today
+        // Check if a session already exists for this slot today to prevent duplicates
         const { rows: existing } = await pool.query(`
-          SELECT * FROM sessions 
-          WHERE (schedule_id = $1 OR (subject_id = $2 AND year = $3 AND stream = $4 AND status = 'active'))
-            AND start_time::date = CURRENT_DATE
+          SELECT id FROM sessions 
+          WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND year::text = $4::text AND stream = $5))
+            AND start_time::date = $6::date
             AND status != 'cancelled'
-        `, [schedule.id, schedule.subject_id, schedule.year, schedule.stream]);
+        `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, istDateStr]);
 
         if (existing.length === 0) {
-          console.log(`[Scheduler] Starting automated session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
+          console.log(`[Scheduler] 🚀 Auto-starting routine session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
 
-          const startDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"})); // Force IST
-
-          // Determine end date from schedule time
-          const [h, m, s_part] = String(schedule.end_time).split(':');
-          const endDate = new Date(startDate);
-          endDate.setHours(parseInt(h), parseInt(m), parseInt(s_part) || 0);
-
-          // Build IST date string to avoid double timezone conversion on timestamptz column
-          const pad = (n) => String(n).padStart(2, '0');
-          const istDateStr = `${startDate.getFullYear()}-${pad(startDate.getMonth()+1)}-${pad(startDate.getDate())}`;
-          const startStr = `${istDateStr} ${pad(startDate.getHours())}:${pad(startDate.getMinutes())}:${pad(startDate.getSeconds())}`;
-          const endStr = `${istDateStr} ${pad(endDate.getHours())}:${pad(endDate.getMinutes())}:${pad(endDate.getSeconds())}`;
+          // Create start/end timestamps with explicit IST offset for Postgres
+          const startStr = `${istDateStr}T${schedule.start_time}+05:30`;
+          const endStr = `${istDateStr}T${schedule.end_time}+05:30`;
 
           const result = await pool.query(
             'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
-            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id, false]
+            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year, schedule.stream, schedule.id, false]
           );
 
           const sessionId = result.rows[0].id;
-          console.log(`[Scheduler] Session created successfully with ID: ${sessionId}`);
-
-          // Notify frontend with full details
           const io = app.get('io');
           if (io) {
-            io.emit('session_started', {
-              id: sessionId,
-              subject_id: schedule.subject_id,
+            io.emit('session_started', { 
+              id: sessionId, 
+              subject_id: schedule.subject_id, 
               subject_name: schedule.subject_name,
-              classroom_id: schedule.classroom_id,
-              classroom_name: schedule.classroom_name,
-              teacher_id: schedule.teacher_id,
-              teacher_name: schedule.teacher_name,
-              year: schedule.year,
-              stream: schedule.stream,
-              status: 'active',
-              start_time: startDate,
-              end_time: endDate
+              status: 'active' 
             });
-
-            // Notify AI service to start scanning
-            axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
           }
+          // Notify AI service
+          axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
         }
       }
 
-      // 2. Activate manually 'scheduled' sessions whose time has arrived
+      // --- STEP B: Activate 'Scheduled' sessions whose time has come ---
       const { rows: toActivate } = await pool.query(`
         UPDATE sessions SET status = 'active'
-        WHERE status = 'scheduled' AND start_time <= $1 AND end_time > $1
+        WHERE status = 'scheduled' AND start_time <= NOW() AND end_time > NOW()
         RETURNING id, subject_id
-      `, [now]);
+      `);
 
       if (toActivate.length > 0) {
         const io = app.get('io');
-        toActivate.forEach(s => {
-          console.log(`[Scheduler] Activating manually scheduled session ${s.id}`);
-          if (io) io.emit('session_started', { id: s.id, subject_id: s.subject_id });
-          
-          // Notify AI service
-          axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => {});
-        });
-      }
-
-      // 3a. Physically delete CUSTOM sessions that have expired (their purpose is done)
-      const { rows: expiredCustom } = await pool.query(`
-        SELECT id FROM sessions 
-        WHERE is_custom = true
-          AND end_time <= $1
-      `, [now]);
-
-      if (expiredCustom.length > 0) {
-        const io = app.get('io');
-        console.log(`[Scheduler] Finalizing ${expiredCustom.length} expired custom session(s).`);
-        for (const s of expiredCustom) {
-          await finalizeSession(s.id, io);
+        for (const s of toActivate) {
+          console.log(`[Scheduler] ⚡ Activating scheduled session ${s.id}`);
+          if (io) io.emit('session_started', { id: s.id, status: 'active' });
         }
+        axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
       }
 
-      // 3b. End/delete NON-CUSTOM sessions that have reached their end_time or are zombie (started on previous day)
-      const { rows: endingSessions } = await pool.query(`
+      // --- STEP C: Finalize Expired Sessions ---
+      // We check for both custom and non-custom sessions that have passed their end_time
+      const { rows: toFinalize } = await pool.query(`
         SELECT id FROM sessions 
-        WHERE is_custom = false
-          AND status IN ('active', 'scheduled') 
+        WHERE status IN ('active', 'scheduled') 
           AND (
-            end_time <= $1 -- Past its end time
-            OR start_time::date < CURRENT_DATE -- Started on a previous day (Stale/Zombie session)
+            end_time <= NOW() -- Time passed
+            OR start_time::date < CURRENT_DATE -- Zombie session from yesterday
           )
-      `, [now]);
+      `);
 
-      if (endingSessions.length > 0) {
+      if (toFinalize.length > 0) {
         const io = app.get('io');
-        console.log(`[Scheduler] Finalizing ${endingSessions.length} expired non-custom sessions.`);
-        for (const s of endingSessions) {
+        console.log(`[Scheduler] 🏁 Finalizing ${toFinalize.length} expired session(s).`);
+        for (const s of toFinalize) {
           await finalizeSession(s.id, io);
         }
       }
 
     } catch (err) {
-      console.error('[Scheduler Error]:', err);
+      console.error('[Scheduler Error]:', err.message);
     }
   });
 
-  console.log('Automated Scheduler Service Initialized.');
+  console.log('[Scheduler] Automated Scheduler Service Initialized.');
 };
