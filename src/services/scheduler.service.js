@@ -42,11 +42,11 @@ export const initScheduler = (app) => {
         if (existing.length === 0) {
           console.log(`[Scheduler] Starting automated session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
 
-          const startDate = new Date(); // Start at current actual time
+          const startDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"})); // Force IST
 
           // Determine end date from schedule time
           const [h, m, s_part] = String(schedule.end_time).split(':');
-          const endDate = new Date();
+          const endDate = new Date(startDate);
           endDate.setHours(parseInt(h), parseInt(m), parseInt(s_part) || 0);
 
           const result = await pool.query(
