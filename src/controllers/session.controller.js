@@ -498,17 +498,20 @@ export const getSessions = async (req, res) => {
       const sessionStart = new Date(s.start_time);
       const sessionEnd = new Date(s.end_time);
       
-      // REAPER: If an active session is clearly in the future (due to previous timezone bugs), kill it
-      const isFutureGhost = s.status === 'active' && sessionStart > new Date(now.getTime() + 60000); // 1 min buffer
+      // REAPER: If an active session is clearly in the future OR has an impossible duration (> 3 hours)
+      // due to previous timezone bugs, kill it immediately.
+      const durationHours = (sessionEnd - sessionStart) / 3600000;
+      const isFutureGhost = s.status === 'active' && sessionStart > new Date(now.getTime() + 60000); 
+      const isInvalidDuration = s.status === 'active' && !s.is_custom && durationHours > 3; // Regular classes are never > 3h
       
       if (s.status === 'active') {
         const isPast = typeof s.end_time === 'string' 
           ? s.end_time < currentTimeStr 
           : now > sessionEnd;
           
-        if (isPast || isFutureGhost) {
+        if (isPast || isFutureGhost || isInvalidDuration) {
           if (!String(s.id).startsWith('routine_')) {
-            console.log(`[REAPER] Terminating ${isFutureGhost ? 'Future Ghost' : 'Expired'} session: ${s.id}`);
+            console.log(`[REAPER] Terminating ${isInvalidDuration ? 'Invalid Duration' : (isFutureGhost ? 'Future Ghost' : 'Expired')} session: ${s.id}`);
             await finalizeSession(s.id, io);
           }
           updatedS.status = 'ended';
