@@ -342,7 +342,30 @@ const initDb = async () => {
 
     // --- SEED ORGANIZATIONS (DEPRECATED: Now uses Global Master List) ---
 
+    // ── ONE-TIME CLEANUP: Remove duplicate active sessions caused by timezone bug ──
+    // Keeps only the most recently created active session per subject+classroom per day
+    const { rowCount: dupsRemoved } = await client.query(`
+      UPDATE sessions SET status = 'ended'
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id,
+            ROW_NUMBER() OVER (
+              PARTITION BY subject_id, classroom_id, (start_time AT TIME ZONE 'Asia/Kolkata')::date
+              ORDER BY id DESC  -- keep the most recent (highest id)
+            ) AS rn
+          FROM sessions
+          WHERE status = 'active' AND is_custom = false
+        ) ranked
+        WHERE rn > 1  -- end all but the most recent duplicate
+      )
+    `);
+    if (dupsRemoved > 0) {
+      console.log(`✅ Cleanup: Ended ${dupsRemoved} duplicate active session(s).`);
+
+    }
+
     await client.query('COMMIT');
+
     console.log('Database tables initialized successfully.');
     client.release();
     process.exit(0);
