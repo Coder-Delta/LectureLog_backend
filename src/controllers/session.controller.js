@@ -287,11 +287,18 @@ export const getSessions = async (req, res) => {
 
   try {
     // ── STEP 1: Auto-Start/End Maintenance ──
-    // Force India Standard Time (IST) for session activation logic
-    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const currentDay = days[now.getDay()];
-    const currentTimeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS (in IST)
+    // Robust IST Detection: Get current time parts in Asia/Kolkata
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric", minute: "numeric", second: "numeric",
+      hour12: false, weekday: "long"
+    });
+    const parts = formatter.formatToParts(new Date());
+    const getPart = (type) => parts.find(p => p.type === type)?.value;
+    
+    const currentDay = getPart("weekday");
+    const currentTimeStr = `${getPart("hour")}:${getPart("minute")}:${getPart("second")}`;
+    const now = new Date(); // Internal server time for expiration checks
 
     // 1. Mark custom sessions that have ended as 'ended' (instead of deleting)
     const { rows: expiredCustomSessions } = await pool.query(`
