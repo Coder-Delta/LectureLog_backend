@@ -6,10 +6,11 @@ import { finalizeSession } from '../controllers/session.controller.js';
 export const initScheduler = (app) => {
   // Run every minute
   cron.schedule('* * * * *', async () => {
-    const now = new Date();
+    // Force IST for background scheduler
+    const now = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const currentDay = days[now.getDay()];
-    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00
+    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00 (IST)
 
     try {
       // Find timetable entries for this time
