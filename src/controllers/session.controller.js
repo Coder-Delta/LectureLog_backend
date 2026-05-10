@@ -287,10 +287,11 @@ export const getSessions = async (req, res) => {
 
   try {
     // ── STEP 1: Auto-Start/End Maintenance ──
-    // Universal Wall Clock: Use the server's literal clock time without offsets
-    const now = new Date();
-    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTimeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
+    // Get the current time in India (IST) as a string for routine comparison
+    const istDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long' });
+    const currentTimeStr = istDate.toTimeString().split(' ')[0]; // HH:MM:SS in IST
+    const now = new Date(); // Internal server time for expiration
 
     // 1. Mark custom sessions that have ended as 'ended' (instead of deleting)
     const { rows: expiredCustomSessions } = await pool.query(`

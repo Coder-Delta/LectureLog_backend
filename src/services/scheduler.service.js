@@ -6,10 +6,10 @@ import { finalizeSession } from '../controllers/session.controller.js';
 export const initScheduler = (app) => {
   // Run every minute
   cron.schedule('* * * * *', async () => {
-    // Background Wall Clock
-    const now = new Date();
-    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00
+    // Get current time in India (IST)
+    const istDate = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long' });
+    const currentTime = istDate.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00 IST
 
     try {
       // Find timetable entries for this time
