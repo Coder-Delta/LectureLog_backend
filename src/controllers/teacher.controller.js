@@ -26,15 +26,32 @@ export const registerTeacher = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(college_id, salt);
 
-    // 1. Get embedding from AI Service first to ensure photo is valid
-    const aiFormData = new FormData();
-    aiFormData.append('file', fs.createReadStream(imageFile.path));
+    // 1. Get embedding (Check if provided by Electron app first)
+    let embedding = null;
+    if (req.body.face_embedding) {
+      try {
+        embedding = JSON.parse(req.body.face_embedding);
+      } catch (e) {
+        embedding = req.body.face_embedding;
+      }
+    }
 
-    const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-      headers: aiFormData.getHeaders(),
-    });
+    // 2. If no embedding provided, call AI Service (Legacy/Web flow)
+    if (!embedding) {
+      try {
+        const aiFormData = new FormData();
+        aiFormData.append('file', fs.createReadStream(imageFile.path));
 
-    const embedding = aiResponse.data.embedding;
+        const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+          headers: aiFormData.getHeaders(),
+          timeout: 5000 
+        });
+        embedding = aiResponse.data.embedding;
+      } catch (aiErr) {
+        console.error('AI Service Error:', aiErr.message);
+        throw new Error(`AI Recognition Service is unreachable (${aiErr.message}). Please ensure the local AI service is running.`);
+      }
+    }
 
     if (!embedding || !Array.isArray(embedding)) {
       throw new Error('AI Service failed to generate a valid face embedding.');
@@ -70,13 +87,24 @@ export const registerTeacher = async (req, res) => {
 
     res.status(201).json({ message: 'Teacher registered successfully', teacherId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {
-    console.error('Registration Error:', err);
+    console.error('Full Registration Error:', err);
     if (imageFile && fs.existsSync(imageFile.path)) fs.unlinkSync(imageFile.path);
     
     if (err.code === '23505') {
       return res.status(409).json({ message: 'Email already exists' });
     }
-    res.status(500).json({ message: 'Error registering teacher', error: err.message });
+    
+    // TEMPORARY: Return full error for debugging cloud-side
+    res.status(500).json({ 
+      message: 'Error registering teacher', 
+      error: err.message,
+      stack: err.stack,
+      debugInfo: {
+        hasUser: !!req.user,
+        orgId: req.user?.organization_id,
+        bodyFields: Object.keys(req.body)
+      }
+    });
   }
 };
 
@@ -137,15 +165,29 @@ export const updateTeacher = async (req, res) => {
     let queryParams = [name, email, college_id];
 
     if (imageFile) {
-      // 1. Get new embedding from AI Service
-      const aiFormData = new FormData();
-      aiFormData.append('file', fs.createReadStream(imageFile.path));
+      let embedding = null;
 
-      const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-        headers: aiFormData.getHeaders(),
-      });
+      // 1. Check if embedding is already provided
+      if (req.body.face_embedding) {
+        try {
+          embedding = JSON.parse(req.body.face_embedding);
+        } catch (e) {
+          embedding = req.body.face_embedding;
+        }
+      }
 
-      const embedding = aiResponse.data.embedding;
+      // 2. If no embedding provided, call AI Service
+      if (!embedding) {
+        const aiFormData = new FormData();
+        aiFormData.append('file', fs.createReadStream(imageFile.path));
+
+        const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+          headers: aiFormData.getHeaders(),
+        });
+
+        embedding = aiResponse.data.embedding;
+      }
+
       if (!embedding || !Array.isArray(embedding)) {
         throw new Error('AI Service failed to generate a valid face embedding.');
       }
