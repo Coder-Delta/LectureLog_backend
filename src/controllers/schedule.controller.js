@@ -333,8 +333,24 @@ export const deleteSchedule = async (req, res) => {
     ]);
 
     if (userRole === 'admin') {
+      // If it's today, stop any active session for this schedule
+      const { rows: cancelledSessions } = await pool.query(`
+        UPDATE sessions 
+        SET status = 'cancelled'
+        WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND teacher_id = $4))
+        AND start_time::date = CURRENT_DATE
+        AND is_custom = false
+        RETURNING id
+      `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);
+
       await pool.query('DELETE FROM schedules WHERE id = $1', [id]);
-      res.json({ message: 'Routine updated: Class permanently removed.', role: 'admin' });
+
+      const io = req.app.get('io');
+      if (io && cancelledSessions.length > 0) {
+        cancelledSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+      }
+
+      res.json({ message: 'Routine updated: Class permanently removed and active session stopped.', role: 'admin' });
     } else {
       res.json({ message: 'Class removed from this week only.', role: 'teacher' });
     }
@@ -401,17 +417,16 @@ export const cancelSchedule = async (req, res) => {
       teacher_id,
     ]);
 
-    // If it's today, stop the active session by marking it cancelled (don't delete history)
+    // If it's today, stop the active session by marking it cancelled
     if (finalCancelDate === toDateOnly(new Date())) {
       const { rows: activeSessions } = await pool.query(`
         UPDATE sessions 
         SET status = 'cancelled'
-        WHERE subject_id = $1 AND classroom_id = $2 AND teacher_id = $3
+        WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND teacher_id = $4))
         AND start_time::date = CURRENT_DATE
-        AND (start_time::time)::text LIKE $4 || '%'
         AND is_custom = false
         RETURNING id
-      `, [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, schedule.start_time]);
+      `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);
 
       const io = req.app.get('io');
       if (io && activeSessions.length > 0) {

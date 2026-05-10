@@ -8,21 +8,19 @@ export const initScheduler = (app) => {
 
   // Run every minute
   cron.schedule('* * * * *', async () => {
-    // 1. Define 'now' in UTC for database comparisons
     const now = new Date();
     
-    // 2. Get current time in India (IST) reliably
+    // Get current time in India (IST) reliably for routine matching
     const istOffset = 5.5 * 60 * 60 * 1000;
     const istDate = new Date(now.getTime() + istOffset);
     const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
     const istDateStr = istDate.toISOString().split('T')[0];
     const currentTimeStr = istDate.toISOString().split('T')[1].substring(0, 8); // HH:MM:SS
-    const currentTimeHM = currentTimeStr.substring(0, 5); // HH:MM
+    
+    console.log(`[Scheduler] 🕒 Tick: ${currentDay} ${currentTimeStr} IST (UTC: ${now.toISOString()})`);
 
     try {
       // --- STEP A: Auto-Start Routine Sessions ---
-      // Find timetable entries that SHOULD be active right now
-      // We look for any routine slot where current time is between start and end
       const { rows: schedules } = await pool.query(`
         SELECT t.*, sub.name as subject_name 
         FROM timetable_week_entries t
@@ -36,18 +34,16 @@ export const initScheduler = (app) => {
       `, [currentDay, currentTimeStr, istDateStr]);
 
       for (const schedule of schedules) {
-        // Check if a session already exists for this slot today to prevent duplicates
+        // Check for duplicates
         const { rows: existing } = await pool.query(`
-          SELECT id FROM sessions 
+          SELECT id, status FROM sessions 
           WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND year::text = $4::text AND stream = $5))
             AND start_time::date = $6::date
             AND status != 'cancelled'
         `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, istDateStr]);
 
         if (existing.length === 0) {
-          console.log(`[Scheduler] 🚀 Auto-starting routine session: ${schedule.subject_name} (${schedule.start_time} - ${schedule.end_time})`);
-
-          // Create start/end timestamps with explicit IST offset for Postgres
+          console.log(`[Scheduler] 🚀 Auto-starting routine session: ${schedule.subject_name}`);
           const startStr = `${istDateStr}T${schedule.start_time}+05:30`;
           const endStr = `${istDateStr}T${schedule.end_time}+05:30`;
 
@@ -56,27 +52,21 @@ export const initScheduler = (app) => {
             [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year, schedule.stream, schedule.id, false]
           );
 
-          const sessionId = result.rows[0].id;
           const io = app.get('io');
-          if (io) {
-            io.emit('session_started', { 
-              id: sessionId, 
-              subject_id: schedule.subject_id, 
-              subject_name: schedule.subject_name,
-              status: 'active' 
-            });
-          }
-          // Notify AI service
+          if (io) io.emit('session_started', { id: result.rows[0].id, status: 'active' });
           axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
         }
       }
 
       // --- STEP B: Activate 'Scheduled' sessions whose time has come ---
+      // We use the JS 'now' to ensure we match the system clock the user sees
       const { rows: toActivate } = await pool.query(`
         UPDATE sessions SET status = 'active'
-        WHERE status = 'scheduled' AND start_time <= NOW() AND end_time > NOW()
+        WHERE status = 'scheduled' 
+          AND start_time <= $1 
+          AND end_time > $1
         RETURNING id, subject_id
-      `);
+      `, [now]);
 
       if (toActivate.length > 0) {
         const io = app.get('io');
@@ -88,15 +78,14 @@ export const initScheduler = (app) => {
       }
 
       // --- STEP C: Finalize Expired Sessions ---
-      // We check for both custom and non-custom sessions that have passed their end_time
       const { rows: toFinalize } = await pool.query(`
-        SELECT id FROM sessions 
+        SELECT id, subject_id FROM sessions 
         WHERE status IN ('active', 'scheduled') 
           AND (
-            end_time <= NOW() -- Time passed
-            OR start_time::date < CURRENT_DATE -- Zombie session from yesterday
+            end_time <= $1 
+            OR start_time::date < ($2::date - interval '5 hours') -- Handle rollover
           )
-      `);
+      `, [now, now]);
 
       if (toFinalize.length > 0) {
         const io = app.get('io');

@@ -343,13 +343,19 @@ export const getSessions = async (req, res) => {
         // Filter out routine slots that already have a real DB session
         const alreadyExists = dbSessions.some(sess => {
           if (sess.is_custom) return false;
-          if (sess.subject_id !== routine.subject_id) return false;
           
-          const sessISTTime = new Date(sess.start_time).toLocaleTimeString('en-US', { 
-            timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit' 
-          });
-          const routineTime = routine.start_time.substring(0, 5);
-          return sessISTTime === routineTime && sess.status !== 'cancelled';
+          // Match by subject and classroom
+          if (sess.subject_id !== routine.subject_id) return false;
+          if (sess.classroom_id !== routine.classroom_id) return false;
+
+          // Match time within a +/- 2 minute window to handle slight drifts
+          const sessStart = new Date(sess.start_time);
+          const [h, m] = routine.start_time.split(':');
+          const routineStart = new Date(sessStart);
+          routineStart.setHours(parseInt(h), parseInt(m), 0, 0);
+
+          const diffMinutes = Math.abs(sessStart - routineStart) / (1000 * 60);
+          return diffMinutes <= 2 && sess.status !== 'cancelled';
         });
         return !alreadyExists;
       })
