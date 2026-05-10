@@ -207,6 +207,7 @@ const initDb = async () => {
         subject_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
         classroom_id INTEGER NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
         teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
         day_of_week VARCHAR(20) NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
         start_time TIME NOT NULL,
         end_time TIME NOT NULL,
@@ -214,6 +215,10 @@ const initDb = async () => {
         stream VARCHAR(50) NOT NULL DEFAULT 'CSE',
         camera_id VARCHAR(50) NOT NULL DEFAULT '0'
       )
+    `);
+
+    await client.query(`
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
     `);
 
     await client.query(`
@@ -236,6 +241,7 @@ const initDb = async () => {
         subject_id INTEGER REFERENCES subjects(id) ON DELETE SET NULL,
         classroom_id INTEGER REFERENCES classrooms(id) ON DELETE SET NULL,
         teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
         day_of_week VARCHAR(20) NOT NULL CHECK (day_of_week IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
         start_time TIME NOT NULL,
         end_time TIME NOT NULL,
@@ -246,6 +252,10 @@ const initDb = async () => {
         created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+
+    await client.query(`
+      ALTER TABLE timetable_week_entries ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE;
     `);
 
     await client.query(`
