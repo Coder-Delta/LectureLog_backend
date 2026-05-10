@@ -22,25 +22,35 @@ export const initScheduler = (app) => {
     try {
       // --- STEP A: Auto-Start Routine Sessions ---
       const { rows: schedules } = await pool.query(`
-        SELECT t.*, sub.name as subject_name 
-        FROM timetable_week_entries t
-        JOIN subjects sub ON t.subject_id = sub.id
-        WHERE t.day_of_week = $1 
-          AND t.start_time <= $2::time 
-          AND t.end_time > $2::time
-          AND t.action = 'active'
-          AND t.week_start <= $3::date 
-          AND (t.week_start + interval '6 days') >= $3::date
+        SELECT s.*, sub.name as subject_name 
+        FROM schedules s
+        JOIN subjects sub ON s.subject_id = sub.id
+        WHERE s.day_of_week = $1 
+          AND s.start_time <= $2::time 
+          AND s.end_time > $2::time
+          AND NOT EXISTS (
+            SELECT 1 FROM timetable_week_entries t
+            WHERE t.source_id = s.id 
+              AND t.source_type = 'regular'
+              AND t.entry_date = $3::date
+              AND t.action IN ('cancelled', 'deleted')
+          )
       `, [currentDay, currentTimeStr, istDateStr]);
 
       for (const schedule of schedules) {
         // Check for duplicates
         const { rows: existing } = await pool.query(`
           SELECT id, status FROM sessions 
-          WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND year::text = $4::text AND stream = $5))
-            AND start_time::date = $6::date
-            AND status != 'cancelled'
-        `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, istDateStr]);
+          WHERE (
+            schedule_id = $1 
+            OR (
+              subject_id = $2 AND classroom_id = $3 AND year::text = $4::text AND stream = $5
+              AND start_time::time = $7::time -- Match the exact time slot
+            )
+          )
+          AND start_time::date = $6::date
+          AND status != 'cancelled'
+        `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, istDateStr, schedule.start_time]);
 
         if (existing.length === 0) {
           console.log(`[Scheduler] 🚀 Auto-starting routine session: ${schedule.subject_name}`);
@@ -59,7 +69,6 @@ export const initScheduler = (app) => {
       }
 
       // --- STEP B: Activate 'Scheduled' sessions whose time has come ---
-      // We use the JS 'now' to ensure we match the system clock the user sees
       const { rows: toActivate } = await pool.query(`
         UPDATE sessions SET status = 'active'
         WHERE status = 'scheduled' 

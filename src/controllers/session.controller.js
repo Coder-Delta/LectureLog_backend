@@ -322,14 +322,19 @@ export const getSessions = async (req, res) => {
 
     // ── STEP 2: Fetch Today's Routine (virtual sessions for UI) ──
     let scheduleQuery = `
-      SELECT t.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
-      FROM timetable_week_entries t
-      JOIN subjects sub ON t.subject_id = sub.id
-      LEFT JOIN classrooms c ON t.classroom_id = c.id
-      LEFT JOIN users u ON t.teacher_id = u.id
-      WHERE t.day_of_week = $1 AND t.action = 'active'
-      AND t.week_start <= CURRENT_DATE 
-      AND (t.week_start + interval '6 days') >= CURRENT_DATE
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
+      FROM schedules s
+      JOIN subjects sub ON s.subject_id = sub.id
+      LEFT JOIN classrooms c ON s.classroom_id = c.id
+      LEFT JOIN users u ON s.teacher_id = u.id
+      WHERE s.day_of_week = $1 
+        AND NOT EXISTS (
+          SELECT 1 FROM timetable_week_entries t2
+          WHERE t2.source_id = s.id 
+            AND t2.source_type = 'regular'
+            AND t2.entry_date = CURRENT_DATE
+            AND t2.action IN ('cancelled', 'deleted')
+        )
     `;
     const scheduleParams = [currentDay];
     if (year) { scheduleParams.push(year); scheduleQuery += ` AND t.year = $${scheduleParams.length}`; }
