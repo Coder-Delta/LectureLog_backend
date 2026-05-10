@@ -496,13 +496,24 @@ export const getSessions = async (req, res) => {
     const finalSessions = [];
     for (const s of allSessions) {
       let updatedS = { ...s };
-      const sessionStart = new Date(s.start_time);
-      const sessionEnd = new Date(s.end_time);
+      
+      // Force strings from DB to be interpreted as IST (+05:30)
+      const parseIST = (dateStr) => {
+        if (!dateStr) return new Date();
+        const iso = typeof dateStr === 'string' ? dateStr : dateStr.toISOString();
+        // If it doesn't have a zone, assume IST
+        return iso.includes('Z') || iso.includes('+') ? new Date(iso) : new Date(iso + '+05:30');
+      };
+
+      const sessionStart = parseIST(s.start_time);
+      const sessionEnd = parseIST(s.end_time);
       
       // REAPER: If an active session is clearly in the future OR has an impossible duration (> 3 hours)
       // due to previous timezone bugs, kill it immediately.
+      // Comparison is now safe because both are in the same relative time
       const durationHours = (sessionEnd - sessionStart) / 3600000;
-      const isFutureGhost = s.status === 'active' && sessionStart > new Date(now.getTime() + 60000); 
+      const istNow = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+      const isFutureGhost = s.status === 'active' && sessionStart > new Date(istNow.getTime() + 60000); 
       const isInvalidDuration = s.status === 'active' && !s.is_custom && durationHours > 3; // Regular classes are never > 3h
       
       if (s.status === 'active') {
