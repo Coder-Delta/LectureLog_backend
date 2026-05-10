@@ -49,9 +49,15 @@ export const initScheduler = (app) => {
           const endDate = new Date(startDate);
           endDate.setHours(parseInt(h), parseInt(m), parseInt(s_part) || 0);
 
+          // Build IST date string to avoid double timezone conversion on timestamptz column
+          const pad = (n) => String(n).padStart(2, '0');
+          const istDateStr = `${startDate.getFullYear()}-${pad(startDate.getMonth()+1)}-${pad(startDate.getDate())}`;
+          const startStr = `${istDateStr} ${pad(startDate.getHours())}:${pad(startDate.getMinutes())}:${pad(startDate.getSeconds())}`;
+          const endStr = `${istDateStr} ${pad(endDate.getHours())}:${pad(endDate.getMinutes())}:${pad(endDate.getSeconds())}`;
+
           const result = await pool.query(
             'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
-            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startDate, endDate, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id, false]
+            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year || '1', schedule.stream || 'CSE', schedule.id, false]
           );
 
           const sessionId = result.rows[0].id;
