@@ -355,8 +355,8 @@ export const getSessions = async (req, res) => {
         const { rows: inserted } = await pool.query(`
           INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
           VALUES ($1, $2, $3,
-            (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date::text || ' ' || $4,
-            (NOW() AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date::text || ' ' || $5,
+            (((NOW() AT TIME ZONE 'Asia/Kolkata')::date::text) || ' ' || $4 || ' +0530')::timestamptz,
+            (((NOW() AT TIME ZONE 'Asia/Kolkata')::date::text) || ' ' || $5 || ' +0530')::timestamptz,
             'active', $6, $7, false)
           RETURNING *
         `, [routine.subject_id, routine.classroom_id, routine.teacher_id, routine.start_time, routine.end_time, routine.year, routine.stream]);
