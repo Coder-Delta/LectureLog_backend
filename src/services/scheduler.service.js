@@ -6,17 +6,10 @@ import { finalizeSession } from '../controllers/session.controller.js';
 export const initScheduler = (app) => {
   // Run every minute
   cron.schedule('* * * * *', async () => {
-    // Robust IST Detection for Background Scheduler
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Kolkata",
-      hour: "numeric", minute: "numeric", second: "numeric",
-      hour12: false, weekday: "long"
-    });
-    const parts = formatter.formatToParts(new Date());
-    const getPart = (type) => parts.find(p => p.type === type)?.value;
-    
-    const currentDay = getPart("weekday");
-    const currentTime = `${getPart("hour")}:${getPart("minute")}:00`; // HH:MM:00 (IST)
+    // Background Wall Clock
+    const now = new Date();
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const currentTime = now.toTimeString().split(' ')[0].substring(0, 5) + ':00'; // HH:MM:00
 
     try {
       // Find timetable entries for this time

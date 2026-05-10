@@ -287,18 +287,10 @@ export const getSessions = async (req, res) => {
 
   try {
     // ── STEP 1: Auto-Start/End Maintenance ──
-    // Robust IST Detection: Get current time parts in Asia/Kolkata
-    const formatter = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Kolkata",
-      hour: "numeric", minute: "numeric", second: "numeric",
-      hour12: false, weekday: "long"
-    });
-    const parts = formatter.formatToParts(new Date());
-    const getPart = (type) => parts.find(p => p.type === type)?.value;
-    
-    const currentDay = getPart("weekday");
-    const currentTimeStr = `${getPart("hour")}:${getPart("minute")}:${getPart("second")}`;
-    const now = new Date(); // Internal server time for expiration checks
+    // Universal Wall Clock: Use the server's literal clock time without offsets
+    const now = new Date();
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
+    const currentTimeStr = now.toTimeString().split(' ')[0]; // HH:MM:SS
 
     // 1. Mark custom sessions that have ended as 'ended' (instead of deleting)
     const { rows: expiredCustomSessions } = await pool.query(`
@@ -362,8 +354,8 @@ export const getSessions = async (req, res) => {
         const { rows: inserted } = await pool.query(`
           INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom)
           VALUES ($1, $2, $3, 
-            (CURRENT_DATE + $4::time)::timestamp, 
-            (CURRENT_DATE + $5::time)::timestamp, 
+            (CURRENT_DATE + $4::time)::timestamp WITHOUT TIME ZONE, 
+            (CURRENT_DATE + $5::time)::timestamp WITHOUT TIME ZONE, 
             'active', $6, $7, false)
           RETURNING *
         `, [routine.subject_id, routine.classroom_id, routine.teacher_id, routine.start_time, routine.end_time, routine.year, routine.stream]);
