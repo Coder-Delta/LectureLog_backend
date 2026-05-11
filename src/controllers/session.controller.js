@@ -359,14 +359,18 @@ export const getSessions = async (req, res) => {
           if (sess.subject_id !== routine.subject_id) return false;
           if (sess.classroom_id !== routine.classroom_id) return false;
 
-          // Match time within a +/- 2 minute window to handle slight drifts
-          const sessStart = new Date(sess.start_time);
-          const [h, m] = routine.start_time.split(':');
-          const routineStart = new Date(sessStart);
-          routineStart.setHours(parseInt(h), parseInt(m), 0, 0);
+          // Match time using IST strings for reliable cross-timezone comparison
+          const sessStartIST = new Date(sess.start_time).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' });
+          const routineStartHM = routine.start_time.substring(0, 5); // HH:MM
+          
+          // Check if HH:MM matches or is within a 2-minute drift
+          const [sH, sM] = sessStartIST.split(':').map(Number);
+          const [rH, rM] = routineStartHM.split(':').map(Number);
+          
+          const sMinutes = sH * 60 + sM;
+          const rMinutes = rH * 60 + rM;
 
-          const diffMinutes = Math.abs(sessStart - routineStart) / (1000 * 60);
-          return diffMinutes <= 2 && sess.status !== 'cancelled';
+          return Math.abs(sMinutes - rMinutes) <= 2 && sess.status !== 'cancelled';
         });
         return !alreadyExists;
       })
