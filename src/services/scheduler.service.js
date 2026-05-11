@@ -13,31 +13,47 @@ export const initScheduler = (app) => {
     // Get current time in India (IST) reliably for routine matching
     const istOffset = 5.5 * 60 * 60 * 1000;
     const istDate = new Date(now.getTime() + istOffset);
-    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-    const istDateStr = istDate.toISOString().split('T')[0];
-    const currentTimeStr = istDate.toISOString().split('T')[1].substring(0, 8); // HH:MM:SS
+    
+    // Reliable local date string (YYYY-MM-DD)
+    const istDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // en-CA gives YYYY-MM-DD
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+    const currentTimeStr = now.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' }); // HH:MM:SS
     
     console.log(`[Scheduler] 🕒 Tick: ${currentDay} ${currentTimeStr} IST (UTC: ${now.toISOString()})`);
+
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayDateStr = yesterday.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const yesterdayDay = yesterday.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
 
     try {
       // --- STEP A: Auto-Start Routine Sessions ---
       const { rows: schedules } = await pool.query(`
-        SELECT s.*, sub.name as subject_name 
+        SELECT s.*, sub.name as subject_name, 
+               (CASE WHEN s.day_of_week = $1 THEN $3::date ELSE $5::date END) as session_date
         FROM schedules s
         JOIN subjects sub ON s.subject_id = sub.id
-        WHERE s.day_of_week = $1 
-          AND s.start_time <= $2::time 
-          AND s.end_time > $2::time
-          AND NOT EXISTS (
-            SELECT 1 FROM timetable_week_entries t
-            WHERE t.source_id = s.id 
-              AND t.source_type = 'regular'
-              AND t.entry_date = $3::date
-              AND t.action IN ('cancelled', 'deleted')
-          )
-      `, [currentDay, currentTimeStr, istDateStr]);
+        WHERE (
+          -- Case 1: Started today
+          (s.day_of_week = $1 AND (
+            (s.start_time <= $2::time AND s.end_time > $2::time AND s.end_time > s.start_time)
+            OR
+            (s.start_time <= $2::time AND s.end_time < s.start_time)
+          ))
+          OR
+          -- Case 2: Started yesterday but ends today (crossover)
+          (s.day_of_week = $4 AND s.end_time < s.start_time AND s.end_time > $2::time)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM timetable_week_entries t
+          WHERE t.source_id = s.id 
+            AND t.source_type = 'regular'
+            AND t.entry_date = (CASE WHEN s.day_of_week = $1 THEN $3::date ELSE $5::date END)
+            AND t.action IN ('cancelled', 'deleted')
+        )
+      `, [currentDay, currentTimeStr, istDateStr, yesterdayDay, yesterdayDateStr]);
 
       for (const schedule of schedules) {
+        const sDateStr = new Date(schedule.session_date).toLocaleDateString('en-CA');
         // Check for duplicates
         const { rows: existing } = await pool.query(`
           SELECT id, status FROM sessions 
@@ -45,17 +61,25 @@ export const initScheduler = (app) => {
             schedule_id = $1 
             OR (
               subject_id = $2 AND classroom_id = $3 AND year::text = $4::text AND stream = $5
-              AND start_time::time = $7::time -- Match the exact time slot
+              AND start_time::time = $7::time
             )
           )
           AND start_time::date = $6::date
           AND status != 'cancelled'
-        `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, istDateStr, schedule.start_time]);
+        `, [schedule.id, schedule.subject_id, schedule.classroom_id, schedule.year, schedule.stream, sDateStr, schedule.start_time]);
 
         if (existing.length === 0) {
           console.log(`[Scheduler] 🚀 Auto-starting routine session: ${schedule.subject_name}`);
-          const startStr = `${istDateStr}T${schedule.start_time}+05:30`;
-          const endStr = `${istDateStr}T${schedule.end_time}+05:30`;
+          const startStr = `${sDateStr}T${schedule.start_time}+05:30`;
+          
+          // Handle midnight rollover for end date
+          let endDayStr = sDateStr;
+          if (schedule.end_time < schedule.start_time) {
+            const startDateObj = new Date(`${sDateStr}T00:00:00`);
+            const nextDay = new Date(startDateObj.getTime() + 24 * 60 * 60 * 1000);
+            endDayStr = nextDay.toISOString().split('T')[0];
+          }
+          const endStr = `${endDayStr}T${schedule.end_time}+05:30`;
 
           const result = await pool.query(
             'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
@@ -92,7 +116,7 @@ export const initScheduler = (app) => {
         WHERE status IN ('active', 'scheduled') 
           AND (
             end_time <= $1 
-            OR start_time::date < ($2::date - interval '5 hours') -- Handle rollover
+            OR start_time::date < ($2::date - interval '20 hours') -- Safety cleanup for very old sessions
           )
       `, [now, now]);
 

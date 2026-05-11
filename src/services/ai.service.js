@@ -5,7 +5,7 @@ let pollInterval = null;
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8001';
 let failureCount = 0;
-const MAX_FAILURES = 3;
+const MAX_FAILURES = 5;
 
 export const initAIServiceMonitor = (app) => {
   const io = app.get('io');
@@ -88,7 +88,7 @@ export const initAIServiceMonitor = (app) => {
       } else {
           // Intermediate state to prevent flickering
           console.log(`[AI-Monitor] Missed a heartbeat (${failureCount}/${MAX_FAILURES})`);
-          if (lastStatus && lastStatus.online && lastStatus.displayStatus !== "AI Service Lagging...") {
+          if (failureCount > 2 && lastStatus && lastStatus.online && lastStatus.displayStatus !== "AI Service Lagging...") {
               lastStatus = { ...lastStatus, displayStatus: "AI Service Lagging..." };
               if (io) io.emit('ai_status_update', lastStatus);
           }

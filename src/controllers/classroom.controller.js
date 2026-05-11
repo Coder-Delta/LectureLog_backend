@@ -7,7 +7,7 @@ export const getClassrooms = async (req, res) => {
   const { organization_id } = req.user;
   try {
     const result = await pool.query(
-      'SELECT * FROM classrooms WHERE organization_id = $1 ORDER BY id ASC',
+      'SELECT * FROM classrooms WHERE organization_id = $1 OR organization_id IS NULL ORDER BY id ASC',
       [organization_id]
     );
     res.json(result.rows);
@@ -75,7 +75,7 @@ export const updateClassroom = async (req, res) => {
     }
 
     const result = await pool.query(
-      'UPDATE classrooms SET name = $1, camera_url = $2, camera_name = $3 WHERE id = $4 AND organization_id = $5 RETURNING *',
+      'UPDATE classrooms SET name = $1, camera_url = $2, camera_name = $3 WHERE id = $4 AND (organization_id = $5 OR organization_id IS NULL) RETURNING *',
       [name, camera_url, camera_name, id, organization_id]
     );
 
@@ -102,7 +102,7 @@ export const deleteClassroom = async (req, res) => {
 
   try {
     const result = await pool.query(
-      'DELETE FROM classrooms WHERE id = $1 AND organization_id = $2 RETURNING *', 
+      'DELETE FROM classrooms WHERE id = $1 AND (organization_id = $2 OR organization_id IS NULL) RETURNING *', 
       [id, organization_id]
     );
 

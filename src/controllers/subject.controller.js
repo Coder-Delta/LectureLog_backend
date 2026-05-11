@@ -7,7 +7,7 @@ export const getSubjects = async (req, res) => {
   const { organization_id } = req.user;
   try {
     const result = await pool.query(
-      'SELECT * FROM subjects WHERE organization_id = $1 ORDER BY id ASC',
+      'SELECT * FROM subjects WHERE organization_id = $1 OR organization_id IS NULL ORDER BY id ASC',
       [organization_id]
     );
     res.json(result.rows);
@@ -57,7 +57,7 @@ export const updateSubject = async (req, res) => {
 
   try {
     const result = await pool.query(
-      'UPDATE subjects SET name = $1, code = $2 WHERE id = $3 AND organization_id = $4 RETURNING *',
+      'UPDATE subjects SET name = $1, code = $2 WHERE id = $3 AND (organization_id = $4 OR organization_id IS NULL) RETURNING *',
       [name, code, id, organization_id]
     );
 
@@ -84,7 +84,7 @@ export const deleteSubject = async (req, res) => {
 
   try {
     const result = await pool.query(
-      'DELETE FROM subjects WHERE id = $1 AND organization_id = $2 RETURNING *', 
+      'DELETE FROM subjects WHERE id = $1 AND (organization_id = $2 OR organization_id IS NULL) RETURNING *', 
       [id, organization_id]
     );
 

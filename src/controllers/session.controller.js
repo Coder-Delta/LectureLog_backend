@@ -58,6 +58,11 @@ export const finalizeSession = async (sessionId, io = null) => {
     if (io) {
       io.emit('session_ended', { id: sessionId });
     }
+
+    // Trigger AI service to refresh and potentially release cameras immediately
+    axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`)
+      .catch(e => console.warn(`[Finalizer] AI Refresh failed for session ${sessionId}`));
+
     return true;
   } catch (err) {
     console.error(`[Finalizer Error] Session ${sessionId}:`, err.message);
@@ -288,10 +293,11 @@ export const getSessions = async (req, res) => {
     // 1. Get current IST context for virtual routine generation
     const istOffset = 5.5 * 60 * 60 * 1000;
     const now = new Date();
-    const istDate = new Date(now.getTime() + istOffset);
-    const currentDay = istDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-    const istDateStr = istDate.toISOString().split('T')[0];
-    const currentTimeHM = istDate.toISOString().split('T')[1].substring(0, 5);
+    
+    // Reliable local time logic
+    const istDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
+    const currentTimeHM = now.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' }).substring(0, 5); // HH:MM
 
     // ── STEP 1: Fetch Real Database Sessions ──
     const { startOfWeek, endOfWeek } = getCurrentWeekRange(week_start);
@@ -337,8 +343,8 @@ export const getSessions = async (req, res) => {
         )
     `;
     const scheduleParams = [currentDay];
-    if (year) { scheduleParams.push(year); scheduleQuery += ` AND t.year = $${scheduleParams.length}`; }
-    if (stream) { scheduleParams.push(stream); scheduleQuery += ` AND t.stream = $${scheduleParams.length}`; }
+    if (year) { scheduleParams.push(year); scheduleQuery += ` AND s.year = $${scheduleParams.length}`; }
+    if (stream) { scheduleParams.push(stream); scheduleQuery += ` AND s.stream = $${scheduleParams.length}`; }
 
     const { rows: todayRoutine } = await pool.query(scheduleQuery, scheduleParams);
 
@@ -365,7 +371,10 @@ export const getSessions = async (req, res) => {
         return !alreadyExists;
       })
       .map(routine => {
-        const isPast = routine.end_time.substring(0, 5) < currentTimeHM;
+        const isCrossover = routine.end_time < routine.start_time;
+        const isPast = isCrossover 
+          ? (currentTimeHM >= routine.end_time && currentTimeHM < routine.start_time)
+          : (routine.end_time.substring(0, 5) < currentTimeHM);
         return {
           id: `routine_${routine.id}`,
           subject_id: routine.subject_id,
