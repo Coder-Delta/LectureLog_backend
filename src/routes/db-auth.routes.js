@@ -1,5 +1,5 @@
 import express from "express";
-import { adminLogin, login, signup, studentLogin, claimInit, claimVerify, claimFinalize, adminSignupInit, adminSignupVerify } from "../controllers/auth.controller.js";
+import { adminLogin, login, signup, studentLogin, claimInit, claimVerify, claimFinalize, adminSignupInit, adminSignupVerify, forgotPasswordInit, forgotPasswordVerify, forgotPasswordFinalize } from "../controllers/auth.controller.js";
 
 const router = express.Router();
 
@@ -15,5 +15,10 @@ router.post("/admin-signup-verify", adminSignupVerify);
 router.post("/claim-init", claimInit);
 router.post("/claim-verify", claimVerify);
 router.post("/claim-finalize", claimFinalize);
+
+// Forgot Password Flow
+router.post("/forgot-password-init", forgotPasswordInit);
+router.post("/forgot-password-verify", forgotPasswordVerify);
+router.post("/forgot-password-finalize", forgotPasswordFinalize);
 
 export default router;

@@ -94,7 +94,16 @@ export const registerStudent = async (req, res) => {
  */
 export const getStudents = async (req, res) => {
   try {
-    const { rows: students } = await pool.query('SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, image_url, created_at FROM students ORDER BY created_at DESC');
+    const organization_id = req.user?.organization_id || req.query.organization_id;
+    
+    if (!organization_id) {
+      return res.status(400).json({ message: 'Organization context missing' });
+    }
+
+    const { rows: students } = await pool.query(
+      'SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, image_url, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC',
+      [organization_id]
+    );
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -46,7 +46,7 @@ export const claimInit = async (req, res) => {
     // Send Real Email if API Key exists
     if (process.env.RESEND_API_KEY) {
       await resend.emails.send({
-        from: 'LectureLog <onboarding@resend.dev>',
+        from: 'LectureLog OTP <otp@mahammadanish.me>',
         to: email,
         subject: 'LectureLog - Your Verification Code',
         html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto;">
@@ -107,7 +107,7 @@ export const adminSignupInit = async (req, res) => {
     // Send Real Email if API Key exists
     if (process.env.RESEND_API_KEY) {
       await resend.emails.send({
-        from: 'LectureLog <onboarding@resend.dev>',
+        from: 'LectureLog OTP <otp@mahammadanish.me>',
         to: email,
         subject: 'Welcome to LectureLog - Verify Your College',
         html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto;">
@@ -231,5 +231,68 @@ export const studentLogin = async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error during login.' });
+  }
+};
+
+export const forgotPasswordInit = async (req, res) => {
+  const { email } = req.body;
+  try {
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    const { rows: users } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    const { rows: students } = await pool.query('SELECT * FROM students WHERE email = $1', [email]);
+
+    const target = users[0] || students[0];
+    if (!target) return res.status(404).json({ message: 'Email not found.' });
+
+    if (users[0]) {
+      await pool.query("UPDATE users SET otp_code = $1, otp_expiry = $2 WHERE id = $3", [otp, expiry, target.id]);
+    } else {
+      await pool.query("UPDATE students SET otp_code = $1, otp_expiry = $2 WHERE id = $3", [otp, expiry, target.id]);
+    }
+
+    if (process.env.RESEND_API_KEY) {
+      await resend.emails.send({
+        from: 'LectureLog OTP <otp@mahammadanish.me>',
+        to: email,
+        subject: 'LectureLog - Reset Your Password',
+        html: `<div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto;">
+          <h2 style="color: #105934; text-align: center;">Password Reset</h2>
+          <p>You requested to reset your password. Use the following code:</p>
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #105934; margin: 20px 0; text-align: center; background: #f0fdf4; padding: 10px; border-radius: 8px;">${otp}</div>
+          <p>This code will expire in 10 minutes.</p>
+        </div>`
+      });
+    }
+
+    console.log(`[AUTH] Forgot Password OTP for ${email}: ${otp}`);
+    res.json({ message: 'OTP sent' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const forgotPasswordVerify = async (req, res) => {
+  const { email, otp } = req.body;
+  try {
+    const { rows: users } = await pool.query("SELECT * FROM users WHERE email = $1 AND otp_code = $2 AND otp_expiry > NOW()", [email, otp]);
+    const { rows: students } = await pool.query("SELECT * FROM students WHERE email = $1 AND otp_code = $2 AND otp_expiry > NOW()", [email, otp]);
+    if (users.length === 0 && students.length === 0) return res.status(400).json({ message: 'Invalid OTP' });
+    res.json({ message: 'OTP verified' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+export const forgotPasswordFinalize = async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await pool.query("UPDATE users SET password = $1, otp_code = NULL WHERE email = $2", [hashedPassword, email]);
+    await pool.query("UPDATE students SET password = $1, otp_code = NULL WHERE email = $2", [hashedPassword, email]);
+    res.json({ message: "Password updated!" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

@@ -76,7 +76,7 @@ export const startSession = async (req, res) => {
 
   try {
     const start_time = req.body.start_time ? new Date(req.body.start_time) : new Date();
-    const end_time = req.body.end_time ? new Date(req.body.end_time) : new Date(start_time.getTime() + (duration || 60) * 60000);
+    const end_time = req.body.end_time ? new Date(req.body.end_time) : new Date(start_time.getTime() + (duration || 50) * 60000);
     
     // Day of the week for the specific date provided
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -299,14 +299,20 @@ export const getSessions = async (req, res) => {
     const currentDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
     const currentTimeHM = now.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' }).substring(0, 5); // HH:MM
 
+    const organization_id = req.user?.organization_id || req.query.organization_id;
+    if (!organization_id) {
+        return res.status(400).json({ message: 'Organization context missing' });
+    }
+
     // ── STEP 1: Fetch Real Database Sessions ──
     const { startOfWeek, endOfWeek } = getCurrentWeekRange(week_start);
     const customDateClause = allCustom === 'true' ? `TRUE` : `s.start_time >= $1 AND s.start_time <= $2`; 
     const statusClause = allCustom === 'true' || week_start
       ? `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`
       : `s.status IN ('active', 'scheduled', 'ended')`;
-    const sessionParams = allCustom === 'true' ? [] : [startOfWeek, endOfWeek];
-
+    
+    // We filter by organization_id to ensure isolation between different colleges
+    let sessionParams = [startOfWeek, endOfWeek, organization_id];
     let sessionQuery = `
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
              s.start_time, s.end_time,
@@ -316,11 +322,19 @@ export const getSessions = async (req, res) => {
        LEFT JOIN classrooms c ON s.classroom_id = c.id
        LEFT JOIN users u ON s.teacher_id = u.id
        WHERE (
-         (s.is_custom = false AND ${statusClause})
+         (s.is_custom = false AND ${statusClause} AND s.start_time >= $1 AND s.start_time <= $2)
          OR
          (s.is_custom = true AND ${statusClause} AND ${customDateClause})
        )
+       AND (c.organization_id = $3 OR c.organization_id IS NULL)
     `;
+    
+    // Adjust params if allCustom is true (we still need $1 and $2 placeholders but they can be dummy or handled)
+    // Actually simpler: always pass start/end unless we really want ALL history
+    if (allCustom === 'true') {
+        sessionQuery = sessionQuery.replace('s.start_time >= $1 AND s.start_time <= $2', 'TRUE');
+    }
+
     if (year) { sessionParams.push(year); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
     if (stream) { sessionParams.push(stream); sessionQuery += ` AND s.stream = $${sessionParams.length}`; }
 
@@ -334,6 +348,7 @@ export const getSessions = async (req, res) => {
       LEFT JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN users u ON s.teacher_id = u.id
       WHERE s.day_of_week = $1 
+        AND (s.organization_id = $2 OR s.organization_id IS NULL)
         AND NOT EXISTS (
           SELECT 1 FROM timetable_week_entries t2
           WHERE t2.source_id = s.id 
@@ -342,7 +357,7 @@ export const getSessions = async (req, res) => {
             AND t2.action IN ('cancelled', 'deleted')
         )
     `;
-    const scheduleParams = [currentDay];
+    const scheduleParams = [currentDay, organization_id];
     if (year) { scheduleParams.push(year); scheduleQuery += ` AND s.year = $${scheduleParams.length}`; }
     if (stream) { scheduleParams.push(stream); scheduleQuery += ` AND s.stream = $${scheduleParams.length}`; }
 
