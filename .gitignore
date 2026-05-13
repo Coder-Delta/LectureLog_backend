@@ -4,3 +4,8 @@ node_modules/
 dist/
 build/
 scratch/
+check_*.js
+diagnose_*.js
+simulate_*.js
+force_*.js
+cleanup_*.js
