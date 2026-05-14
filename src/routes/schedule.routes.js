@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 import { createSchedule, getMySchedules, updateSchedule, getSchedules, deleteSchedule, cancelSchedule } from '../controllers/schedule.controller.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.middleware.js';
 

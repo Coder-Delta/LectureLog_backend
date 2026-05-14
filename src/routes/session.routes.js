@@ -9,6 +9,9 @@ router.post('/end', authenticateToken, authorizeRole('teacher', 'admin'), endSes
 router.post('/end-by-schedule', authenticateToken, authorizeRole('teacher', 'admin'), endBySchedule);
 router.post('/cancel', authenticateToken, authorizeRole('teacher', 'admin'), cancelSession);
 router.delete('/:id', authenticateToken, authorizeRole('admin'), deleteCustomSession);
+
+// Public route for AI Service synchronization
+router.get('/public', getSessions);
 router.get('/', authenticateToken, getSessions);
 
 export default router;

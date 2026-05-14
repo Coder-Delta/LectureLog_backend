@@ -1,4 +1,4 @@
-import pool from '../config/database.config.js';
+﻿import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

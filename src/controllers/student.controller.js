@@ -1,4 +1,4 @@
-import pool from '../config/database.config.js';
+﻿import pool from '../config/database.config.js';
 import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
@@ -53,7 +53,7 @@ export const registerStudent = async (req, res) => {
 
     // 2. Upload to Cloudinary
     const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
-      folder: 'lecturelog/students',
+      folder: 'Merge/students',
     });
 
     // 3. Save to PostgreSQL (Including the face vector and Cloudinary info)
@@ -229,7 +229,7 @@ export const updateStudent = async (req, res) => {
 
       // 2. Upload new image to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
-        folder: 'lecturelog/students',
+        folder: 'Merge/students',
       });
 
       // 3. Get old Cloudinary ID to delete it

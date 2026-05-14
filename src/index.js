@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import app from "./app.js";
@@ -35,7 +35,7 @@ const startServer = async () => {
     }
 
     server.listen(PORT, () => {
-      console.log(`LectureLog backend running on port ${PORT}`);
+      console.log(`Merge backend running on port ${PORT}`);
     });
   } catch (error) {
     console.error("Failed to start backend:", error);

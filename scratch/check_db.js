@@ -1,4 +1,4 @@
-
+﻿
 import pkg from 'pg';
 const { Pool } = pkg;
 
@@ -6,7 +6,7 @@ const pool = new Pool({
   host: 'localhost',
   user: 'postgres',
   password: '@anish321@',
-  database: 'LectureLog',
+  database: 'Merge',
   port: 5432
 });
 

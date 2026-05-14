@@ -1,4 +1,4 @@
-import pool from '../config/database.config.js';
+﻿import pool from '../config/database.config.js';
 
 export const processRecognition = async (req, res) => {
   const { student_id, session_id, confidence } = req.body;

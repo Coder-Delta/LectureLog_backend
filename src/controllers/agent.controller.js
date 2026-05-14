@@ -1,4 +1,4 @@
-import pool from '../config/database.config.js';
+﻿import pool from '../config/database.config.js';
 
 export const getAttendanceReports = async (req, res) => {
   try {

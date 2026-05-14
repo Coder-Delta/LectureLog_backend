@@ -128,6 +128,12 @@ export const initScheduler = (app) => {
         }
       }
 
+      // --- STEP D: Proactive Sync (Notify AI if any sessions are active) ---
+      const { rows: activeNow } = await pool.query("SELECT id FROM sessions WHERE status = 'active'");
+      if (activeNow.length > 0) {
+        axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
+      }
+
     } catch (err) {
       console.error('[Scheduler Error]:', err.message);
     }

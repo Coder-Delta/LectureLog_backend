@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import { adminLogin, login, signup, studentLogin, claimInit, claimVerify, claimFinalize, adminSignupInit, adminSignupVerify, forgotPasswordInit, forgotPasswordVerify, forgotPasswordFinalize } from "../controllers/auth.controller.js";
 
 const router = express.Router();

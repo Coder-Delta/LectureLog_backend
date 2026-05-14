@@ -1,4 +1,4 @@
-import pool from '../src/config/database.config.js';
+﻿import pool from '../src/config/database.config.js';
 
 async function inspect() {
   try {

@@ -1,4 +1,4 @@
-import pool from '../config/database.config.js';
+﻿import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
@@ -59,7 +59,7 @@ export const registerTeacher = async (req, res) => {
 
     // 2. Upload to Cloudinary
     const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
-      folder: 'lecturelog/teachers',
+      folder: 'Merge/teachers',
     });
 
     // 3. Save to PostgreSQL
@@ -194,7 +194,7 @@ export const updateTeacher = async (req, res) => {
 
       // 2. Upload new image to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
-        folder: 'lecturelog/teachers',
+        folder: 'Merge/teachers',
       });
 
       // 3. Get old Cloudinary ID to delete it

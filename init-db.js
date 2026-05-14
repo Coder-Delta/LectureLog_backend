@@ -328,17 +328,8 @@ const initDb = async () => {
       }
     }
 
-    await client.query(`
-      INSERT INTO subjects (name, organization_id)
-      VALUES ('General Class', NULL)
-      ON CONFLICT (name, organization_id) DO NOTHING
-    `);
+    // Removed default subject/classroom seeding
 
-    await client.query(`
-      INSERT INTO classrooms (name, camera_url, camera_name, organization_id)
-      VALUES ('Main Classroom', '0', 'Default Camera', NULL)
-      ON CONFLICT (name, organization_id) DO NOTHING
-    `);
 
     // --- SEED ORGANIZATIONS (DEPRECATED: Now uses Global Master List) ---
 

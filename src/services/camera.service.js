@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+﻿import { spawn } from 'child_process';
 import path from 'path';
 import axios from 'axios';
 
@@ -11,7 +11,7 @@ export const initCameraBackend = () => {
 
   const startProcess = () => {
     // Path to the python script
-    const scriptPath = path.resolve('..', 'LectureLog_AI', 'camera_backend.py');
+    const scriptPath = path.resolve('..', 'Merge_AI', 'camera_backend.py');
     
     console.log(`[Camera-Backend] Spawning process: python ${scriptPath}`);
     

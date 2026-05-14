@@ -1,8 +1,8 @@
-# LectureLog Database Design
+# Merge Database Design
 
 ## Runtime Database
 
-LectureLog now runs only on PostgreSQL.
+Merge now runs only on PostgreSQL.
 
 Connection values come from `.env`:
 
@@ -11,7 +11,7 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=your_password
-DB_NAME=lecturelog
+DB_NAME=Merge
 DB_SSL=false
 ```
 

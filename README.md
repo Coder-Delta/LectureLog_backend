@@ -1,4 +1,4 @@
-# LectureLog Backend
+# Merge Backend
 
 AI-Based Smart Attendance System Backend.
 
@@ -93,12 +93,12 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=your_password
-DB_NAME=lecturelog
+DB_NAME=Merge
 DB_SSL=false
 JWT_SECRET=replace_me
 AI_SERVICE_URL=http://localhost:8000
 PINECONE_API_KEY=replace_me
 PINECONE_ENVIRONMENT=replace_me
-PINECONE_INDEX=lecturelog-embeddings
+PINECONE_INDEX=Merge-embeddings
 PINECONE_API_KEY_TWO=replace_me
 ```

@@ -1,10 +1,10 @@
-import pg from "pg";
+﻿import pg from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
 const { Pool } = pg;
 
-export const DATABASE_NAME = process.env.DB_NAME || "lecturelog";
+export const DATABASE_NAME = process.env.DB_NAME || "Merge";
 export const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || null;
 
 const parseSslSetting = () => {

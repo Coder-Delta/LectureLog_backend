@@ -7,6 +7,7 @@ const upload = multer({ dest: 'uploads/' });
 const router = express.Router();
 
 router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), upload.single('image'), registerStudent);
+router.get('/public', getStudents);
 router.get('/', authenticateToken, getStudents);
 router.get('/me', authenticateToken, getMyProfile);
 router.get('/my-attendance', authenticateToken, getMyAttendance);
