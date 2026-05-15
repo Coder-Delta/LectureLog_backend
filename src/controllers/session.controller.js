@@ -300,8 +300,9 @@ export const getSessions = async (req, res) => {
     const currentTimeHM = now.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' }).substring(0, 5); // HH:MM
 
     const organization_id = req.user?.organization_id || req.query.organization_id;
-    // Allow public AI requests to proceed even without organization context for now
-    // (or you can set a default organization_id here if needed)
+    if (!organization_id) {
+        return res.status(400).json({ message: 'Organization context missing' });
+    }
 
     // ── STEP 1: Fetch Real Database Sessions ──
     const { startOfWeek, endOfWeek } = getCurrentWeekRange(week_start);
@@ -407,7 +408,7 @@ export const getSessions = async (req, res) => {
           end_time: `${istDateStr}T${routine.end_time}+05:30`,
           year: routine.year,
           stream: routine.stream,
-          status: isPast ? 'ended' : (currentTimeHM >= routine.start_time.substring(0, 5) && currentTimeHM < routine.end_time.substring(0, 5) ? 'active' : 'scheduled'),
+          status: isPast ? 'ended' : 'scheduled',
           is_custom: false
         };
       });
