@@ -1,4 +1,4 @@
-﻿import pool from '../config/database.config.js';
+import pool from '../config/database.config.js';
 import axios from 'axios';
 import FormData from 'form-data';
 import fs from 'fs';
@@ -118,7 +118,7 @@ export const getMyAttendance = async (req, res) => {
   const studentId = req.user.id;
   try {
     const { rows: attendance } = await pool.query(`
-      SELECT a.*, s.start_time, sub.id as subject_id, sub.name as subject_name
+      SELECT a.*, s.start_time, s.schedule_id, sub.id as subject_id, sub.name as subject_name
       FROM attendance a
       JOIN sessions s ON a.session_id = s.id
       JOIN subjects sub ON s.subject_id = sub.id

@@ -1,4 +1,4 @@
-﻿import pool from '../config/database.config.js';
+import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
@@ -172,7 +172,8 @@ export const login = async (req, res) => {
         role: user.role, 
         organization: user.organization_name,
         year: user.year,
-        stream: user.stream
+        stream: user.stream,
+        image_url: user.image_url
       } 
     });
   } catch (err) {
@@ -199,7 +200,8 @@ export const adminLogin = async (req, res) => {
         id: rows[0].id, 
         name: rows[0].name, 
         email: rows[0].email,
-        role: 'admin' 
+        role: 'admin',
+        image_url: rows[0].image_url 
       } 
     });
   } catch (err) {
@@ -226,7 +228,8 @@ export const studentLogin = async (req, res) => {
         role: 'student', 
         organization: rows[0].organization_name,
         year: rows[0].year,
-        stream: rows[0].stream
+        stream: rows[0].stream,
+        image_url: rows[0].image_url
       } 
     });
   } catch (err) {

@@ -309,7 +309,7 @@ export const getSessions = async (req, res) => {
     const customDateClause = allCustom === 'true' ? `TRUE` : `s.start_time >= $1 AND s.start_time <= $2`; 
     const statusClause = allCustom === 'true' || week_start
       ? `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`
-      : `s.status IN ('active', 'scheduled', 'ended')`;
+      : `s.status IN ('active', 'scheduled', 'ended', 'cancelled')`;
     
     // We filter by organization_id to ensure isolation between different colleges
     let sessionParams = [startOfWeek, endOfWeek, organization_id];
