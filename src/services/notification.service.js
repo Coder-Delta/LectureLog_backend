@@ -14,8 +14,16 @@ export const initNotificationSockets = (io) => {
   io.on('connection', (socket) => {
     socket.on('authenticate', async (data) => {
       try {
-        const { userId, role, organization_id, year, stream } = data;
-        if (!userId || !role) return;
+        const userId = data.id || data.userId || data.sub;
+        const role = data.role;
+        const organization_id = data.organization_id || data.orgId;
+        const year = data.year;
+        const stream = data.stream;
+
+        if (!userId || !role) {
+          console.warn('[Socket Auth Warning]: Received authenticate without userId or role', data);
+          return;
+        }
 
         const userRoom = `user_${role}_${userId}`;
         socket.join(userRoom);
@@ -44,7 +52,7 @@ export const initNotificationSockets = (io) => {
         );
 
         if (unreadRes.rows.length > 0) {
-          socket.emit('unread_sync', unreadRes.rows);
+          socket.emit('unread_sync', { notifications: unreadRes.rows, unreadCount: unreadRes.rows.length });
           console.log(`Dispatched ${unreadRes.rows.length} unread notifications to ${userRoom}`);
         }
       } catch (err) {
@@ -52,9 +60,14 @@ export const initNotificationSockets = (io) => {
       }
     });
 
-    socket.on('mark_read', async ({ notificationId, userId, role }) => {
+    socket.on('mark_read', async (data) => {
       try {
-        await pool.query('UPDATE notifications SET is_read = true WHERE id = $1 AND receiver_id = $2 AND receiver_role = $3', [notificationId, userId, role]);
+        const notifId = data.notificationId || data.id;
+        const uId = data.userId || data.id;
+        const role = data.role;
+        if (notifId && uId && role) {
+          await pool.query('UPDATE notifications SET is_read = true WHERE id = $1 AND receiver_id = $2 AND receiver_role = $3', [notifId, uId, role]);
+        }
       } catch (err) {
         console.error('[Socket Mark Read Error]:', err.message);
       }
@@ -116,7 +129,7 @@ export const sendCohortNotification = async ({
 }) => {
   try {
     const studentsRes = await pool.query(
-      `SELECT id FROM students WHERE organization_id = $1 AND year = $2 AND LOWER(stream) = LOWER($3) AND status = 'active'`,
+      `SELECT id FROM students WHERE organization_id = $1 AND year::int = $2::int AND LOWER(stream) = LOWER($3) AND status = 'active'`,
       [organization_id, year, stream]
     );
 

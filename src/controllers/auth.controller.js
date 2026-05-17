@@ -172,6 +172,7 @@ export const login = async (req, res) => {
         role: user.role, 
         college_id: user.college_id,
         organization: user.organization_name,
+        organization_id: user.organization_id,
         year: user.year,
         stream: user.stream,
         image_url: user.image_url
@@ -204,6 +205,7 @@ export const adminLogin = async (req, res) => {
         role: 'admin',
         college_id: rows[0].college_id || 'ADMIN-1',
         organization: 'Merge Institute of Technology',
+        organization_id: rows[0].organization_id,
         image_url: rows[0].image_url 
       } 
     });
@@ -231,6 +233,7 @@ export const studentLogin = async (req, res) => {
         role: 'student', 
         college_id: rows[0].college_id,
         organization: rows[0].organization_name,
+        organization_id: rows[0].organization_id,
         year: rows[0].year,
         stream: rows[0].stream,
         image_url: rows[0].image_url
