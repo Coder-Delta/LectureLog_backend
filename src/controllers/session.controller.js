@@ -72,7 +72,7 @@ export const finalizeSession = async (sessionId, io = null) => {
 
 export const startSession = async (req, res) => {
   const { subject_id, classroom_id, duration, year, stream } = req.body;
-  const teacher_id = req.user?.id;
+  const teacher_id = req.body.teacher_id || req.user?.id;
 
   try {
     const start_time = req.body.start_time ? new Date(req.body.start_time) : new Date();
@@ -82,6 +82,7 @@ export const startSession = async (req, res) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const sessionDay = days[start_time.getDay()];
     const startStr = start_time.toTimeString().split(' ')[0];
+    const endStr = end_time.toTimeString().split(' ')[0];
 
     // 0. Validation: Cannot add a session that has already passed
     const now_ts = new Date();
@@ -127,10 +128,10 @@ export const startSession = async (req, res) => {
       JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = $7::date
       WHERE s.day_of_week = $1
-        AND s.start_time <= $2::time AND s.end_time > $2::time
+        AND s.start_time < $8::time AND s.end_time > $2::time
         AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
         AND cc.id IS NULL
-    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, start_time]);
+    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, start_time, endStr]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -276,10 +277,26 @@ export const cancelSession = async (req, res) => {
     // Mark custom session as 'cancelled' (not just physical delete)
     await pool.query("UPDATE sessions SET status = 'cancelled' WHERE id = $1", [sessionId]);
 
+    if (session.year && session.stream) {
+      const { rows: roster } = await pool.query(
+        "SELECT id FROM students WHERE year::text = $1::text AND LOWER(stream) = LOWER($2) AND status = 'active'",
+        [session.year, session.stream]
+      );
+      if (roster.length > 0) {
+        const valueStrings = roster.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(',');
+        const flatValues = roster.flatMap(s => [s.id, sessionId, 'absent']);
+        await pool.query(`
+          INSERT INTO attendance (student_id, session_id, status)
+          VALUES ${valueStrings}
+          ON CONFLICT (student_id, session_id) DO NOTHING
+        `, flatValues);
+      }
+    }
+
     const io = req.app.get('io');
     if (io) io.emit('session_ended', { id: sessionId });
 
-    res.json({ message: 'Custom session deleted successfully' });
+    res.json({ message: 'Custom class cancelled successfully' });
   } catch (err) {
     console.error('[cancelSession Error]:', err.message);
     res.status(500).json({ message: err.message });
@@ -329,11 +346,6 @@ export const getSessions = async (req, res) => {
        AND (c.organization_id = $3 OR c.organization_id IS NULL)
     `;
     
-    // Adjust params if allCustom is true (we still need $1 and $2 placeholders but they can be dummy or handled)
-    // Actually simpler: always pass start/end unless we really want ALL history
-    if (allCustom === 'true') {
-        sessionQuery = sessionQuery.replace('s.start_time >= $1 AND s.start_time <= $2', 'TRUE');
-    }
 
     if (year) { sessionParams.push(year); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
     if (stream) { sessionParams.push(stream); sessionQuery += ` AND s.stream = $${sessionParams.length}`; }
@@ -415,10 +427,12 @@ export const getSessions = async (req, res) => {
 
     const finalSessions = [...dbSessions, ...upcomingRoutine];
 
-    // Sort: Active first, then by start time
+    // Sort: Active first, then Scheduled, then Ended, then Cancelled, and finally by start time
     finalSessions.sort((a, b) => {
-      if (a.status === 'active' && b.status !== 'active') return -1;
-      if (a.status !== 'active' && b.status === 'active') return 1;
+      const order = { active: 0, scheduled: 1, ended: 2, cancelled: 3 };
+      const rankA = order[a.status] ?? 9;
+      const rankB = order[b.status] ?? 9;
+      if (rankA !== rankB) return rankA - rankB;
       return String(a.start_time).localeCompare(String(b.start_time));
     });
 

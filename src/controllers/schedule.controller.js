@@ -1,4 +1,4 @@
-﻿import pool from '../config/database.config.js';
+import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -30,14 +30,14 @@ export const createSchedule = async (req, res) => {
   const final_teacher_id = teacher_id || creator_id;
 
   try {
-    console.log('[createSchedule] Checking collisions for:', { day_of_week, start_time, classroom_id, final_teacher_id });
+    console.log('[createSchedule] Checking collisions for:', { day_of_week, start_time, end_time, classroom_id, final_teacher_id });
     // 1. Check for collisions in Regular Schedules (classroom, teacher, OR same year+stream)
     const { rows: routineCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
-      WHERE s.day_of_week = $1 AND s.start_time::time = $2::time
+      WHERE s.day_of_week = $1 AND s.start_time::time < $7::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
-    `, [day_of_week, start_time, classroom_id, final_teacher_id, year || '1', stream || 'CSE']);
+    `, [day_of_week, start_time, classroom_id, final_teacher_id, year || '1', stream || 'CSE', end_time]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -50,15 +50,15 @@ export const createSchedule = async (req, res) => {
       });
     }
 
-    // 2. Check for collisions in Active Sessions only
+    // 2. Check for collisions in Active or Scheduled Sessions
     const { rows: sessionCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
-      AND s.status = 'active'
+      AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
-      AND s.start_time::time <= $6::time AND s.end_time::time > $6::time
-    `, [classroom_id, final_teacher_id, year || '1', stream || 'CSE', day_of_week, start_time]);
+      AND s.start_time::time < $7::time AND s.end_time::time > $6::time
+    `, [classroom_id, final_teacher_id, year || '1', stream || 'CSE', day_of_week, start_time, end_time]);
 
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
@@ -67,7 +67,7 @@ export const createSchedule = async (req, res) => {
       if (collision.teacher_id === parseInt(final_teacher_id)) reason = `Teacher (${collision.teacher_id})`;
 
       return res.status(400).json({ 
-        message: `Conflict! ${reason} is currently in an active session (${collision.subject_name}). Please end that session before assigning a new routine.` 
+        message: `Conflict! ${reason} is currently in an active or scheduled session (${collision.subject_name}). Please end or cancel that session before assigning a new routine.` 
       });
     }
 
@@ -242,16 +242,16 @@ export const updateSchedule = async (req, res) => {
     const { rows: original } = await pool.query('SELECT * FROM schedules WHERE id = $1', [id]);
     if (original.length === 0) return res.status(404).json({ message: 'Schedule not found' });
     
-    const { day_of_week, start_time } = original[0];
+    const { day_of_week, start_time, end_time } = original[0];
 
     // 2. Check for collisions in Regular Schedules (excluding current)
     const { rows: routineCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
-      WHERE s.day_of_week = $1 AND s.start_time = $2
+      WHERE s.day_of_week = $1 AND s.start_time::time < $8::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
       AND s.id != $7
-    `, [day_of_week, start_time, classroom_id, teacher_id, original[0].year, original[0].stream, id]);
+    `, [day_of_week, start_time, classroom_id, teacher_id, original[0].year, original[0].stream, id, end_time]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -264,15 +264,15 @@ export const updateSchedule = async (req, res) => {
       });
     }
 
-    // 3. Check for collisions in Active Sessions only
+    // 3. Check for collisions in Active or Scheduled Sessions
     const { rows: sessionCollisions } = await pool.query(`
       SELECT s.*, sub.name as subject_name FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
-      AND s.status = 'active'
+      AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
-      AND s.start_time::time <= $6::time AND s.end_time::time > $6::time
-    `, [classroom_id, teacher_id, original[0].year, original[0].stream, day_of_week, start_time]);
+      AND s.start_time::time < $7::time AND s.end_time::time > $6::time
+    `, [classroom_id, teacher_id, original[0].year, original[0].stream, day_of_week, start_time, end_time]);
 
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
@@ -281,7 +281,7 @@ export const updateSchedule = async (req, res) => {
       if (collision.teacher_id === parseInt(teacher_id)) reason = `Teacher (${collision.teacher_id})`;
 
       return res.status(400).json({ 
-        message: `Conflict! ${reason} is currently in an active session (${collision.subject_name}). Please end that session before assigning a new routine.` 
+        message: `Conflict! ${reason} is currently in an active or scheduled session (${collision.subject_name}). Please end or cancel that session before assigning a new routine.` 
       });
     }
 
@@ -425,8 +425,28 @@ export const cancelSchedule = async (req, res) => {
         WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND teacher_id = $4))
         AND start_time::date = CURRENT_DATE
         AND is_custom = false
-        RETURNING id
+        RETURNING *
       `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);
+
+      if (activeSessions.length > 0) {
+        for (const sess of activeSessions) {
+          if (sess.year && sess.stream) {
+            const { rows: roster } = await pool.query(
+              "SELECT id FROM students WHERE year::text = $1::text AND LOWER(stream) = LOWER($2) AND status = 'active'",
+              [sess.year, sess.stream]
+            );
+            if (roster.length > 0) {
+              const valueStrings = roster.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(',');
+              const flatValues = roster.flatMap(s => [s.id, sess.id, 'absent']);
+              await pool.query(`
+                INSERT INTO attendance (student_id, session_id, status)
+                VALUES ${valueStrings}
+                ON CONFLICT (student_id, session_id) DO NOTHING
+              `, flatValues);
+            }
+          }
+        }
+      }
 
       const io = req.app.get('io');
       if (io && activeSessions.length > 0) {

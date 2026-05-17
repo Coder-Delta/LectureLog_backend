@@ -1,4 +1,4 @@
-﻿import pool from '../config/database.config.js';
+import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
@@ -237,7 +237,7 @@ export const getMyProfile = async (req, res) => {
   const teacherId = req.user.id;
   try {
     const { rows: teachers } = await pool.query(
-      'SELECT id, name, email, college_id, role, image_url FROM users WHERE id = $1',
+      'SELECT u.id, u.name, u.email, u.college_id, u.role, u.image_url, o.name as organization FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.id = $1',
       [teacherId]
     );
     if (teachers.length === 0) {

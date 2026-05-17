@@ -271,13 +271,13 @@ export const getMyProfile = async (req, res) => {
   const studentId = req.user.id;
   try {
     const { rows: students } = await pool.query(
-      'SELECT id, name, email, roll_number, college_id, year, stream, image_url FROM students WHERE id = $1',
+      'SELECT s.id, s.name, s.email, s.roll_number, s.college_id, s.year, s.stream, s.image_url, o.name as organization FROM students s LEFT JOIN organizations o ON s.organization_id = o.id WHERE s.id = $1',
       [studentId]
     );
     if (students.length === 0) {
       return res.status(404).json({ message: 'Student not found' });
     }
-    res.json(students[0]);
+    res.json({ ...students[0], role: 'student' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
