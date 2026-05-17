@@ -1,4 +1,4 @@
-﻿import dotenv from "dotenv";
+import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import app from "./app.js";
@@ -16,7 +16,10 @@ const io = new Server(server, {
   }
 });
 
+import { initNotificationSockets } from "./services/notification.service.js";
+
 app.set("io", io);
+initNotificationSockets(io);
 
 const PORT = Number(process.env.PORT) || 3000;
 

@@ -1,5 +1,6 @@
 import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
+import { sendCohortNotification, sendRoleNotification } from '../services/notification.service.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -451,6 +452,54 @@ export const cancelSchedule = async (req, res) => {
       const io = req.app.get('io');
       if (io && activeSessions.length > 0) {
         activeSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+      }
+    }
+
+    if (schedule.subject_id && schedule.classroom_id) {
+      const { rows: meta } = await pool.query(
+        `SELECT sub.name as subject_name, c.name as classroom_name 
+         FROM subjects sub, classrooms c 
+         WHERE sub.id = $1 AND c.id = $2`,
+        [schedule.subject_id, schedule.classroom_id]
+      );
+
+      if (meta[0] && schedule.year && schedule.stream) {
+        const orgId = schedule.organization_id;
+        const notifTitle = 'Routine Class Cancelled';
+        const notifMsg = `The ${meta[0].subject_name} class scheduled for ${schedule.day_of_week} (${finalCancelDate}) in ${meta[0].classroom_name} has been cancelled by ${req.user?.name || 'Faculty'}.`;
+        const notifMeta = { year: schedule.year, stream: schedule.stream, schedule_id: id, subject_name: meta[0].subject_name, week_start: finalWeekStart };
+        const notifUrl = `/routine?week_start=${finalWeekStart}`;
+
+        sendCohortNotification({
+          organization_id: orgId,
+          year: schedule.year,
+          stream: schedule.stream,
+          sender_id: teacher_id,
+          sender_name: req.user?.name || 'Faculty',
+          type: 'cancelled-session',
+          session_type: 'cancelled',
+          priority: 'critical',
+          title: notifTitle,
+          message: notifMsg,
+          metadata: notifMeta,
+          redirect_url: notifUrl,
+          expires_in_days: 60
+        });
+
+        sendRoleNotification({
+          role: 'admin',
+          organization_id: orgId,
+          sender_id: teacher_id,
+          sender_name: req.user?.name || 'Faculty',
+          type: 'cancelled-session',
+          session_type: 'cancelled',
+          priority: 'critical',
+          title: notifTitle,
+          message: notifMsg,
+          metadata: notifMeta,
+          redirect_url: notifUrl,
+          expires_in_days: 60
+        });
       }
     }
 

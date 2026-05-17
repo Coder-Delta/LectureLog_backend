@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
 import cloudinary from '../config/cloudinary.config.js';
+import { sendDirectNotification } from '../services/notification.service.js';
 
 dotenv.config();
 
@@ -256,6 +257,18 @@ export const updateStudent = async (req, res) => {
     if (imageFile && fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
+
+    sendDirectNotification({
+      receiver_id: id,
+      receiver_role: 'student',
+      type: 'profile-update',
+      session_type: 'regular',
+      priority: 'normal',
+      title: 'Profile Updated',
+      message: 'Your profile information was updated by Admin. Please check your profile.',
+      redirect_url: '/you',
+      expires_in_days: 90
+    });
 
     res.json({ message: 'Student updated successfully' });
   } catch (err) {

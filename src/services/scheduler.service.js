@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import pool from '../config/database.config.js';
 import axios from 'axios';
 import { finalizeSession } from '../controllers/session.controller.js';
+import { cleanupExpiredNotifications } from './notification.service.js';
 
 export const initScheduler = (app) => {
   console.log('[Scheduler] Initializing background maintenance service...');
@@ -127,6 +128,9 @@ export const initScheduler = (app) => {
           await finalizeSession(s.id, io);
         }
       }
+
+      // --- STEP D: Cleanup Expired Notifications ---
+      await cleanupExpiredNotifications();
 
     } catch (err) {
       console.error('[Scheduler Error]:', err.message);

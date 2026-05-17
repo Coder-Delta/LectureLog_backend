@@ -355,6 +355,30 @@ const initDb = async () => {
 
     }
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        receiver_id INTEGER NOT NULL,
+        receiver_role VARCHAR(50) NOT NULL,
+        sender_id INTEGER,
+        sender_name VARCHAR(255),
+        sender_image TEXT,
+        type VARCHAR(50) NOT NULL,
+        session_type VARCHAR(30),
+        priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+        title VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        metadata JSONB,
+        redirect_url VARCHAR(255),
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+        is_read BOOLEAN NOT NULL DEFAULT FALSE,
+        expires_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_receiver ON notifications(receiver_id, receiver_role, is_read);
+      CREATE INDEX IF NOT EXISTS idx_notifications_expiry ON notifications(expires_at) WHERE expires_at IS NOT NULL;
+    `);
+
     await client.query('COMMIT');
 
     console.log('Database tables initialized successfully.');

@@ -1,4 +1,5 @@
-﻿import axios from 'axios';
+import axios from 'axios';
+import { sendRoleNotification } from './notification.service.js';
 
 let lastStatus = null;
 let pollInterval = null;
@@ -66,6 +67,19 @@ export const initAIServiceMonitor = (app) => {
         lastStatus = currentStatus;
         if (io) io.emit('ai_status_update', currentStatus);
         console.log(`[AI-Monitor] Status updated: ${displayStatus}`);
+
+        if (isError) {
+          sendRoleNotification({
+            role: 'admin',
+            organization_id: 1,
+            type: 'system-alert',
+            session_type: 'system',
+            priority: 'critical',
+            title: 'AI / Camera Alert',
+            message: `System Alert: ${displayStatus}`,
+            expires_in_days: 7
+          });
+        }
       }
 
     } catch (err) {
@@ -84,6 +98,17 @@ export const initAIServiceMonitor = (app) => {
           lastStatus = currentStatus;
           if (io) io.emit('ai_status_update', currentStatus);
           console.warn(`[AI-Monitor] AI Service is confirmed OFFLINE: ${err.message}`);
+
+          sendRoleNotification({
+            role: 'admin',
+            organization_id: 1,
+            type: 'system-alert',
+            session_type: 'system',
+            priority: 'critical',
+            title: 'AI Service Unreachable',
+            message: `The Python AI Recognition service has become unreachable (${err.message}). Live camera attendance scanning is temporarily paused.`,
+            expires_in_days: 7
+          });
         }
       } else {
           // Intermediate state to prevent flickering

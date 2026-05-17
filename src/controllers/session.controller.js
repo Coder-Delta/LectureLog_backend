@@ -1,6 +1,7 @@
 import pool from '../config/database.config.js';
 import axios from 'axios';
 import bcrypt from 'bcryptjs';
+import { sendDirectNotification, sendCohortNotification, sendRoleNotification } from '../services/notification.service.js';
 
 // ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
 const getCurrentWeekRange = (value = null) => {
@@ -52,6 +53,73 @@ export const finalizeSession = async (sessionId, io = null) => {
         `, flatValues);
         
         console.log(`[Finalizer] Session ${sessionId} finalized. Roster size: ${roster.length}. Attendance state preserved.`);
+
+        // 4. Dispatch Grouped & Direct Finalized Attendance Notifications
+        const { rows: attRows } = await pool.query(`
+          SELECT a.student_id, a.status, sub.name as subject_name, c.name as classroom_name, s.organization_id
+          FROM attendance a
+          JOIN sessions sess ON a.session_id = sess.id
+          LEFT JOIN subjects sub ON sess.subject_id = sub.id
+          LEFT JOIN classrooms c ON sess.classroom_id = c.id
+          JOIN students s ON a.student_id = s.id
+          WHERE a.session_id = $1
+        `, [sessionId]);
+
+        let presentCount = 0;
+        let absentCount = 0;
+
+        for (const att of attRows) {
+          if (att.status === 'present') presentCount++;
+          else absentCount++;
+
+          const msg = att.status === 'present' 
+            ? `You were marked PRESENT in ${att.subject_name || 'Class'} at ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`
+            : `You were marked ABSENT in ${att.subject_name || 'Class'}.`;
+
+          sendDirectNotification({
+            receiver_id: att.student_id,
+            receiver_role: 'student',
+            type: 'attendance',
+            session_type: session.is_custom ? 'custom' : 'regular',
+            priority: 'important',
+            title: att.status === 'present' ? 'Attendance Marked: Present' : 'Attendance Marked: Absent',
+            message: msg,
+            metadata: { session_id: sessionId, subject_name: att.subject_name, status: att.status },
+            redirect_url: `/sessions`,
+            organization_id: att.organization_id,
+            expires_in_days: 90
+          });
+        }
+
+        if (session.teacher_id && attRows.length > 0) {
+          const orgId = attRows[0].organization_id;
+          const summaryMsg = `Session Finalized: ${attRows[0].subject_name || 'Class'}. ${presentCount} Present, ${absentCount} Absent.`;
+          sendDirectNotification({
+            receiver_id: session.teacher_id,
+            receiver_role: 'teacher',
+            type: 'attendance',
+            session_type: session.is_custom ? 'custom' : 'regular',
+            priority: 'important',
+            title: 'Session Finalized',
+            message: summaryMsg,
+            metadata: { session_id: sessionId, present_count: presentCount, absent_count: absentCount },
+            redirect_url: `/sessions`,
+            organization_id: orgId,
+            expires_in_days: 90
+          });
+          sendRoleNotification({
+            role: 'admin',
+            organization_id: orgId,
+            type: 'attendance',
+            session_type: session.is_custom ? 'custom' : 'regular',
+            priority: 'important',
+            title: 'Session Finalized',
+            message: summaryMsg,
+            metadata: { session_id: sessionId, present_count: presentCount, absent_count: absentCount },
+            redirect_url: `/sessions`,
+            expires_in_days: 90
+          });
+        }
       }
     }
     
@@ -158,7 +226,7 @@ export const startSession = async (req, res) => {
 
     // Fetch names for the broadcast
     const { rows: meta } = await pool.query(`
-      SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
+      SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name, u.image_url as teacher_image, u.organization_id
       FROM subjects sub, classrooms c, users u
       WHERE sub.id = $1 AND c.id = $2 AND u.id = $3
     `, [subject_id, classroom_id, teacher_id]);
@@ -184,6 +252,47 @@ export const startSession = async (req, res) => {
 
     // Notify AI service to refresh and start scanning immediately
     axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => console.warn('AI Refresh failed on session start'));
+
+    if (meta[0] && year && stream) {
+      const orgId = meta[0].organization_id;
+      const notifTitle = 'Custom Class Scheduled';
+      const notifMsg = `${meta[0].teacher_name} added a custom ${meta[0].subject_name} class for Year ${year} ${stream} at ${new Date(start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} in ${meta[0].classroom_name}.`;
+      const notifMeta = { year, stream, session_id: sessionId, subject_name: meta[0].subject_name, week_start: new Date(start_time).toISOString().split('T')[0] };
+      const notifUrl = `/routine?week_start=${notifMeta.week_start}&highlight=${sessionId}`;
+
+      sendCohortNotification({
+        organization_id: orgId,
+        year,
+        stream,
+        sender_id: teacher_id,
+        sender_name: meta[0].teacher_name,
+        sender_image: meta[0].teacher_image,
+        type: 'custom-session',
+        session_type: 'custom',
+        priority: 'important',
+        title: notifTitle,
+        message: notifMsg,
+        metadata: notifMeta,
+        redirect_url: notifUrl,
+        expires_in_days: 60
+      });
+
+      sendRoleNotification({
+        role: 'admin',
+        organization_id: orgId,
+        sender_id: teacher_id,
+        sender_name: meta[0].teacher_name,
+        sender_image: meta[0].teacher_image,
+        type: 'custom-session',
+        session_type: 'custom',
+        priority: 'important',
+        title: notifTitle,
+        message: notifMsg,
+        metadata: notifMeta,
+        redirect_url: notifUrl,
+        expires_in_days: 60
+      });
+    }
 
     res.status(201).json({ message: 'Custom session added successfully', sessionId });
   } catch (err) {
@@ -295,6 +404,54 @@ export const cancelSession = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) io.emit('session_ended', { id: sessionId });
+
+    if (session.subject_id && session.classroom_id) {
+      const { rows: meta } = await pool.query(
+        `SELECT sub.name as subject_name, c.name as classroom_name, c.organization_id 
+         FROM subjects sub, classrooms c 
+         WHERE sub.id = $1 AND c.id = $2`,
+        [session.subject_id, session.classroom_id]
+      );
+
+      if (meta[0] && session.year && session.stream) {
+        const orgId = meta[0].organization_id;
+        const notifTitle = 'Class Cancelled';
+        const notifMsg = `The custom ${meta[0].subject_name} class scheduled for ${new Date(session.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} in ${meta[0].classroom_name} has been cancelled.`;
+        const notifMeta = { year: session.year, stream: session.stream, session_id: sessionId, subject_name: meta[0].subject_name, week_start: new Date(session.start_time).toISOString().split('T')[0] };
+        const notifUrl = `/routine?week_start=${notifMeta.week_start}&highlight=${sessionId}`;
+
+        sendCohortNotification({
+          organization_id: orgId,
+          year: session.year,
+          stream: session.stream,
+          sender_id: teacher_id,
+          sender_name: req.user?.name || 'Faculty',
+          type: 'cancelled-session',
+          session_type: 'cancelled',
+          priority: 'critical',
+          title: notifTitle,
+          message: notifMsg,
+          metadata: notifMeta,
+          redirect_url: notifUrl,
+          expires_in_days: 60
+        });
+
+        sendRoleNotification({
+          role: 'admin',
+          organization_id: orgId,
+          sender_id: teacher_id,
+          sender_name: req.user?.name || 'Faculty',
+          type: 'cancelled-session',
+          session_type: 'cancelled',
+          priority: 'critical',
+          title: notifTitle,
+          message: notifMsg,
+          metadata: notifMeta,
+          redirect_url: notifUrl,
+          expires_in_days: 60
+        });
+      }
+    }
 
     res.json({ message: 'Custom class cancelled successfully' });
   } catch (err) {

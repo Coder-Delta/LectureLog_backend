@@ -5,6 +5,7 @@ import path from 'path';
 import axios from 'axios';
 import FormData from 'form-data';
 import cloudinary from '../config/cloudinary.config.js';
+import { sendDirectNotification } from '../services/notification.service.js';
 
 /**
  * Register a new teacher
@@ -221,6 +222,18 @@ export const updateTeacher = async (req, res) => {
     if (imageFile && fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
+
+    sendDirectNotification({
+      receiver_id: id,
+      receiver_role: 'teacher',
+      type: 'profile-update',
+      session_type: 'regular',
+      priority: 'normal',
+      title: 'Profile Updated',
+      message: 'Your profile information was updated by Admin. Please check your profile.',
+      redirect_url: '/profile',
+      expires_in_days: 90
+    });
 
     res.json({ message: 'Teacher updated successfully' });
   } catch (err) {
