@@ -29,25 +29,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 // --- GLOBAL MIDDLEWARE ---
-const corsOptions = {
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      process.env.FRONTEND_URL,
-      "http://localhost:5173",
-      "http://localhost:3000"
-    ].filter(Boolean);
-    
-    // Allow requests with no origin (like mobile apps or curl) or in development
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-};
-app.use(cors(corsOptions));
+app.use(cors({ origin: '*', credentials: true }));
 app.use(helmet({ crossOriginResourcePolicy: false })); // Security headers (modified to allow image serving)
 app.use(morgan("dev")); // HTTP request logger
 app.use(express.json({ limit: "10mb" })); // Parse JSON payloads
