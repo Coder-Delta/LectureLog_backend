@@ -55,6 +55,15 @@ const initDb = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
     `);
 
+    // ── Admin Session Tracking (Refinement #4, #8) ──
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_session_token VARCHAR(64);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_device_id VARCHAR(255);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_platform VARCHAR(50);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_seen TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_timestamp TIMESTAMPTZ;
+    `);
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS students (
         id SERIAL PRIMARY KEY,

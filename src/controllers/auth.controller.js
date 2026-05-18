@@ -1,6 +1,7 @@
 import pool from '../config/database.config.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { Resend } from 'resend';
 
@@ -184,18 +185,45 @@ export const login = async (req, res) => {
 };
 
 export const adminLogin = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, device_id, login_platform } = req.body;
   try {
     const { rows } = await pool.query('SELECT * FROM users WHERE email = $1 AND role = $2', [email, 'admin']);
     if (rows.length === 0) return res.status(401).json({ message: 'Invalid Admin credentials.' });
     const isMatch = await bcrypt.compare(password, rows[0].password);
     if (!isMatch) return res.status(401).json({ message: 'Invalid Admin credentials.' });
-    
+
+    // ── Single Active Session Enforcement (Refinement #4, #8) ──
+    // Generate a unique session token — any previous session is implicitly invalidated
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const deviceId = device_id || req.headers['user-agent']?.substring(0, 200) || 'unknown';
+    const platform = login_platform || 'desktop';
+
+    // Store session metadata in DB (overwrites old session = forces logout on old device)
+    await pool.query(
+      `UPDATE users SET 
+        admin_session_token = $1, 
+        admin_device_id = $2, 
+        admin_login_platform = $3, 
+        admin_last_seen = NOW(), 
+        admin_login_timestamp = NOW() 
+      WHERE id = $4`,
+      [sessionToken, deviceId, platform, rows[0].id]
+    );
+
+    // Include session_token in JWT so middleware can verify active session
     const token = jwt.sign(
-      { id: rows[0].id, email: rows[0].email, role: 'admin', organization_id: rows[0].organization_id }, 
+      { 
+        id: rows[0].id, 
+        email: rows[0].email, 
+        role: 'admin', 
+        organization_id: rows[0].organization_id,
+        session_token: sessionToken 
+      }, 
       process.env.JWT_SECRET || 'secret'
     );
     
+    console.log(`[AUTH] Admin login: ${email} from ${platform} (device: ${deviceId.substring(0, 50)}...)`);
+
     res.json({ 
       token, 
       user: { 
@@ -210,6 +238,7 @@ export const adminLogin = async (req, res) => {
       } 
     });
   } catch (err) {
+    console.error('[AUTH] Admin login error:', err.message);
     res.status(500).json({ message: 'Internal server error.' });
   }
 };

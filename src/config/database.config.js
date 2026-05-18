@@ -69,6 +69,15 @@ export const testDatabaseConnection = async () => {
       CREATE INDEX IF NOT EXISTS idx_notifications_expiry ON notifications(expires_at) WHERE expires_at IS NOT NULL;
     `);
 
+    // ── Admin Session Tracking Migration ──
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_session_token VARCHAR(64);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_device_id VARCHAR(255);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_platform VARCHAR(50);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_seen TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_timestamp TIMESTAMPTZ;
+    `);
+
     // --- ONE-TIME AUTO CLEANUP FOR PRODUCTION ---
     // Automatically delete lingering global "General Class" and "Default Camera" records
     const { rowCount: cCount } = await client.query('DELETE FROM classrooms WHERE organization_id IS NULL');
