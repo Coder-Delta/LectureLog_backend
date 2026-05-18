@@ -69,13 +69,15 @@ export const testDatabaseConnection = async () => {
       CREATE INDEX IF NOT EXISTS idx_notifications_expiry ON notifications(expires_at) WHERE expires_at IS NOT NULL;
     `);
 
-    // ── Admin Session Tracking Migration ──
+    // ── Admin Session & Push Notification Tracking Migration ──
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_session_token VARCHAR(64);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_device_id VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_platform VARCHAR(50);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_seen TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_timestamp TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
     `);
 
     // --- ONE-TIME AUTO CLEANUP FOR PRODUCTION ---

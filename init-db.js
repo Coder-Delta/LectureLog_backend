@@ -55,13 +55,14 @@ const initDb = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
     `);
 
-    // ── Admin Session Tracking (Refinement #4, #8) ──
+    // ── Admin Session & Push Notification Tracking ──
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_session_token VARCHAR(64);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_device_id VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_platform VARCHAR(50);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_last_seen TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_login_timestamp TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
     `);
 
     await client.query(`
@@ -101,6 +102,7 @@ const initDb = async () => {
 
     await client.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
     `);
 
     await client.query(`

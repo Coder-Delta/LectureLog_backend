@@ -1,4 +1,5 @@
 import pool from '../config/database.config.js';
+import axios from 'axios';
 
 export const slugifyStream = (stream) => {
   if (!stream) return 'cse';
@@ -6,6 +7,26 @@ export const slugifyStream = (stream) => {
 };
 
 let ioInstance = null;
+
+const dispatchExpoPush = async (pushToken, title, message, redirectUrl, priority, notifId) => {
+  if (!pushToken || (!pushToken.startsWith('ExponentPushToken[') && !pushToken.startsWith('ExpoPushToken['))) return;
+
+  try {
+    await axios.post('https://exp.host/--/api/v2/push/send', {
+      to: pushToken,
+      title: title || 'Merge Notification',
+      body: message,
+      data: { redirect_url: redirectUrl, id: notifId },
+      sound: 'default',
+      priority: priority === 'critical' ? 'high' : 'default'
+    }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    console.log(`[Expo Push] Dispatched push payload to ${pushToken}`);
+  } catch (err) {
+    console.error('[Expo Push Error]:', err?.response?.data || err.message);
+  }
+};
 
 export const initNotificationSockets = (io) => {
   ioInstance = io;
@@ -104,6 +125,14 @@ export const sendDirectNotification = async ({
     if (ioInstance) {
       ioInstance.to(`user_${receiver_role}_${receiver_id}`).emit('notification', newNotif);
     }
+
+    // Dispatch Native Push
+    const table = receiver_role === 'student' ? 'students' : 'users';
+    const tokenRes = await pool.query(`SELECT push_token FROM ${table} WHERE id = $1`, [receiver_id]);
+    if (tokenRes.rows.length > 0 && tokenRes.rows[0].push_token) {
+      dispatchExpoPush(tokenRes.rows[0].push_token, title, message, redirect_url, priority, newNotif.id);
+    }
+
     return newNotif;
   } catch (err) {
     console.error('[sendDirectNotification Error]:', err.message);
@@ -129,7 +158,7 @@ export const sendCohortNotification = async ({
 }) => {
   try {
     const studentsRes = await pool.query(
-      `SELECT id FROM students WHERE organization_id = $1 AND year::int = $2::int AND LOWER(stream) = LOWER($3) AND status = 'active'`,
+      `SELECT id, push_token FROM students WHERE organization_id = $1 AND year::int = $2::int AND LOWER(stream) = LOWER($3) AND status = 'active'`,
       [organization_id, year, stream]
     );
 
@@ -162,6 +191,13 @@ export const sendCohortNotification = async ({
         sender_id, sender_name, sender_image, type, session_type, priority, title, message, metadata, redirect_url, organization_id, created_at: new Date()
       });
     }
+
+    // Dispatch Native Push to all students in cohort
+    studentsRes.rows.forEach(st => {
+      if (st.push_token) {
+        dispatchExpoPush(st.push_token, title, message, redirect_url, priority, null);
+      }
+    });
   } catch (err) {
     console.error('[sendCohortNotification Error]:', err.message);
   }
@@ -184,7 +220,7 @@ export const sendRoleNotification = async ({
 }) => {
   try {
     const usersRes = await pool.query(
-      `SELECT id FROM users WHERE role = $1 AND organization_id = $2 AND is_active = true`,
+      `SELECT id, push_token FROM users WHERE role = $1 AND organization_id = $2 AND is_active = true`,
       [role, organization_id]
     );
 
@@ -216,6 +252,13 @@ export const sendRoleNotification = async ({
         receiver_role: role, sender_id, sender_name, sender_image, type, session_type, priority, title, message, metadata, redirect_url, organization_id, created_at: new Date()
       });
     }
+
+    // Dispatch Native Push to all users in role
+    usersRes.rows.forEach(u => {
+      if (u.push_token) {
+        dispatchExpoPush(u.push_token, title, message, redirect_url, priority, null);
+      }
+    });
   } catch (err) {
     console.error('[sendRoleNotification Error]:', err.message);
   }

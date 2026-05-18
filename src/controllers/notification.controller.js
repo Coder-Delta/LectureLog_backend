@@ -130,3 +130,23 @@ export const clearAllReadNotifications = async (req, res) => {
     res.status(500).json({ message: 'Failed to clear read notifications', error: err.message });
   }
 };
+
+export const savePushToken = async (req, res) => {
+  const userId = req.user?.id;
+  const role = req.user?.role;
+  const { pushToken } = req.body;
+
+  if (userId === undefined || !role || !pushToken) {
+    return res.status(400).json({ message: 'Missing push token or authentication' });
+  }
+
+  try {
+    const table = role === 'student' ? 'students' : 'users';
+    await pool.query(`UPDATE ${table} SET push_token = $1 WHERE id = $2`, [pushToken, userId]);
+    res.json({ message: 'Push token saved successfully' });
+  } catch (err) {
+    console.error('[savePushToken Error]:', err.message);
+    res.status(500).json({ message: 'Failed to save push token', error: err.message });
+  }
+};
+
