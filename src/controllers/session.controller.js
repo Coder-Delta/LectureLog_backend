@@ -503,7 +503,7 @@ export const getSessions = async (req, res) => {
          OR
          (s.is_custom = true AND ${statusClause} AND ${customDateClause})
        )
-       AND (c.organization_id = $3 OR c.organization_id IS NULL)
+       AND c.organization_id = $3
     `;
     
 
@@ -520,7 +520,7 @@ export const getSessions = async (req, res) => {
       LEFT JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN users u ON s.teacher_id = u.id
       WHERE s.day_of_week = $1 
-        AND (s.organization_id = $2 OR s.organization_id IS NULL)
+        AND s.organization_id = $2
         AND NOT EXISTS (
           SELECT 1 FROM timetable_week_entries t2
           WHERE t2.source_id = s.id 
