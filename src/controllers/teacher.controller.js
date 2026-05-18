@@ -6,6 +6,7 @@ import axios from 'axios';
 import FormData from 'form-data';
 import cloudinary from '../config/cloudinary.config.js';
 import { sendDirectNotification } from '../services/notification.service.js';
+import { sendWelcomeRegistrationEmail } from '../services/email.service.js';
 
 /**
  * Register a new teacher
@@ -85,6 +86,14 @@ export const registerTeacher = async (req, res) => {
     if (fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
+
+    // Send Welcome & Activation Email asynchronously
+    sendWelcomeRegistrationEmail({
+      name,
+      email,
+      role: 'teacher',
+      organization_id
+    });
 
     res.status(201).json({ message: 'Teacher registered successfully', teacherId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {

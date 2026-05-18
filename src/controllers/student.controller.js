@@ -6,6 +6,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import cloudinary from '../config/cloudinary.config.js';
 import { sendDirectNotification } from '../services/notification.service.js';
+import { sendWelcomeRegistrationEmail } from '../services/email.service.js';
 
 dotenv.config();
 
@@ -80,6 +81,14 @@ export const registerStudent = async (req, res) => {
     if (fs.existsSync(imageFile.path)) {
       fs.unlinkSync(imageFile.path);
     }
+
+    // Send Welcome & Activation Email asynchronously
+    sendWelcomeRegistrationEmail({
+      name,
+      email,
+      role: 'student',
+      organization_id
+    });
 
     res.status(201).json({ message: 'Student registered successfully', studentId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {
