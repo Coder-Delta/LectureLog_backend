@@ -153,7 +153,7 @@ export const adminSignupVerify = async (req, res) => {
 export const login = async (req, res) => {
   const { email, password, role } = req.body;
   try {
-    const { rows } = await pool.query('SELECT u.*, o.name as organization_name FROM users u JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1', [email]);
+    const { rows } = await pool.query('SELECT u.*, o.name as organization_name FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1', [email]);
     if (rows.length === 0) return res.status(401).json({ message: 'No account found with this institutional email.' });
     
     const user = rows[0];
@@ -217,7 +217,7 @@ export const adminLogin = async (req, res) => {
 export const studentLogin = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const { rows } = await pool.query('SELECT s.*, o.name as organization_name FROM students s JOIN organizations o ON s.organization_id = o.id WHERE s.email = $1', [email]);
+    const { rows } = await pool.query('SELECT s.*, o.name as organization_name FROM students s LEFT JOIN organizations o ON s.organization_id = o.id WHERE s.email = $1', [email]);
     if (rows.length === 0) return res.status(401).json({ message: 'No student record found for this institutional email.' });
     
     const isMatch = await bcrypt.compare(password, rows[0].password);
