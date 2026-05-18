@@ -328,7 +328,8 @@ export const endSession = async (req, res) => {
 };
 
 export const endBySchedule = async (req, res) => {
-  const { schedule_id } = req.body;
+  let { schedule_id } = req.body;
+  if (String(schedule_id).startsWith('routine_')) schedule_id = schedule_id.replace('routine_', '');
   try {
     console.log(`[DeepDelete] Physically removing all sessions for schedule: ${schedule_id}`);
 
@@ -350,7 +351,9 @@ export const endBySchedule = async (req, res) => {
 };
 
 export const cancelSession = async (req, res) => {
-  const { id, password } = req.body;
+  let { id, password } = req.body;
+  if (String(id).startsWith('db_')) id = id.replace('db_', '');
+  if (String(id).startsWith('routine_')) id = id.replace('routine_', '');
   const teacher_id = req.user.id;
   try {
     const sessionId = parseInt(id);
@@ -559,10 +562,15 @@ export const getSessions = async (req, res) => {
         return !alreadyExists;
       })
       .map(routine => {
-        const isCrossover = routine.end_time < routine.start_time;
-        const isPast = isCrossover 
-          ? (currentTimeHM >= routine.end_time && currentTimeHM < routine.start_time)
-          : (routine.end_time.substring(0, 5) < currentTimeHM);
+        const rStart = routine.start_time.substring(0, 5);
+        const rEnd = routine.end_time.substring(0, 5);
+        let status = 'scheduled';
+        if (currentTimeHM >= rEnd) {
+          status = 'ended';
+        } else if (currentTimeHM >= rStart && currentTimeHM < rEnd) {
+          status = 'active';
+        }
+
         return {
           id: `routine_${routine.id}`,
           subject_id: routine.subject_id,
@@ -577,7 +585,7 @@ export const getSessions = async (req, res) => {
           end_time: `${istDateStr}T${routine.end_time}+05:30`,
           year: routine.year,
           stream: routine.stream,
-          status: isPast ? 'ended' : 'scheduled',
+          status,
           is_custom: false
         };
       });

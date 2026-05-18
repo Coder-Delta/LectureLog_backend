@@ -235,7 +235,8 @@ export const getMySchedules = async (req, res) => {
 };
 
 export const updateSchedule = async (req, res) => {
-  const { id } = req.params;
+  let { id } = req.params;
+  if (String(id).startsWith('routine_')) id = id.replace('routine_', '');
   const { subject_id, classroom_id, teacher_id, camera_id } = req.body;
   try {
     console.log('[updateSchedule] Checking collisions for ID:', id, { classroom_id, teacher_id });
@@ -297,7 +298,8 @@ export const updateSchedule = async (req, res) => {
 };
 
 export const deleteSchedule = async (req, res) => {
-  const { id } = req.params;
+  let { id } = req.params;
+  if (String(id).startsWith('routine_')) id = id.replace('routine_', '');
   const weekStartInput = req.query.week_start || req.body?.week_start;
   try {
     const { rows } = await pool.query('SELECT * FROM schedules WHERE id = $1', [id]);
@@ -361,7 +363,8 @@ export const deleteSchedule = async (req, res) => {
 };
 
 export const cancelSchedule = async (req, res) => {
-  const { id } = req.params;
+  let { id } = req.params;
+  if (String(id).startsWith('routine_')) id = id.replace('routine_', '');
   const { password, cancel_date, week_start } = req.body;
   const teacher_id = req.user.id;
 
