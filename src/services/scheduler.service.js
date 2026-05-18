@@ -83,8 +83,8 @@ export const initScheduler = (app) => {
           const endStr = `${endDayStr}T${schedule.end_time}+05:30`;
 
           const result = await pool.query(
-            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
-            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year, schedule.stream, schedule.id, false, schedule.organization_id]
+            'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+            [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year, schedule.stream, schedule.id, false]
           );
 
           const io = app.get('io');
