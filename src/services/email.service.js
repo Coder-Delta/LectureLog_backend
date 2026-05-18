@@ -79,8 +79,8 @@ export const sendWelcomeRegistrationEmail = async ({ name, email, role, organiza
 
         <!-- Footer -->
         <div style="text-align: center; margin-top: 36px; color: #94a3b8; font-size: 13px;">
-          <p style="margin-bottom: 4px;">You received this email because your institution registered you in Merge AI.</p>
-          <p style="margin: 0;">&copy; ${new Date().getFullYear()} Merge Intelligent Systems. All rights reserved.</p>
+          <p style="margin-bottom: 4px;">You received this email because your institution registered you in Merge.</p>
+          <p style="margin: 0;">&copy; ${new Date().getFullYear()} Merge. All rights reserved.</p>
         </div>
 
       </div>
@@ -88,7 +88,7 @@ export const sendWelcomeRegistrationEmail = async ({ name, email, role, organiza
     `;
 
     await resend.emails.send({
-      from: 'Merge AI <welcome@mahammadanish.me>',
+      from: 'Merge <welcome@mahammadanish.me>',
       to: email,
       subject: `Welcome to Merge, ${name}! Activate Your Account`,
       html: htmlContent
