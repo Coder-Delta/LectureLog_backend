@@ -68,6 +68,15 @@ export const testDatabaseConnection = async () => {
       CREATE INDEX IF NOT EXISTS idx_notifications_receiver ON notifications(receiver_id, receiver_role, is_read);
       CREATE INDEX IF NOT EXISTS idx_notifications_expiry ON notifications(expires_at) WHERE expires_at IS NOT NULL;
     `);
+
+    // --- ONE-TIME AUTO CLEANUP FOR PRODUCTION ---
+    // Automatically delete lingering global "General Class" and "Default Camera" records
+    const { rowCount: cCount } = await client.query('DELETE FROM classrooms WHERE organization_id IS NULL');
+    if (cCount > 0) console.log(`✅ [Cleanup] Deleted ${cCount} ghost classrooms.`);
+    
+    const { rowCount: sCount } = await client.query('DELETE FROM subjects WHERE organization_id IS NULL');
+    if (sCount > 0) console.log(`✅ [Cleanup] Deleted ${sCount} ghost subjects.`);
+    // --------------------------------------------
   } finally {
     client.release();
   }
