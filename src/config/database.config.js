@@ -40,6 +40,12 @@ pool.on("error", (error) => {
   console.error("[Database Pool Error]", error);
 });
 
+pool.on("connect", (client) => {
+  client.query("SET TIME ZONE 'Asia/Kolkata'").catch((err) => {
+    console.error("[Database Connection] Failed to set timezone:", err.message);
+  });
+});
+
 export const testDatabaseConnection = async () => {
   const client = await pool.connect();
   try {

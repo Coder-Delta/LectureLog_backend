@@ -4,26 +4,68 @@ import { sendCohortNotification, sendRoleNotification } from '../services/notifi
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const toDateOnly = (date) => date.toISOString().split('T')[0];
+const getISTParts = (date = new Date()) => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'long',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = formatter.formatToParts(date);
+  const getVal = (type) => parts.find(p => p.type === type).value;
+  return {
+    day: getVal('weekday'),
+    dateStr: `${getVal('year')}-${getVal('month')}-${getVal('day')}`,
+    timeHM: `${getVal('hour')}:${getVal('minute')}`,
+    timeHMS: `${getVal('hour')}:${getVal('minute')}:${getVal('second')}`
+  };
+};
+
+const toDateOnly = (date) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date);
+  const getVal = (type) => parts.find(p => p.type === type).value;
+  return `${getVal('year')}-${getVal('month')}-${getVal('day')}`;
+};
 
 const getWeekStartDate = (value = null) => {
-  const base = value ? new Date(`${value}T00:00:00`) : new Date();
-  const day = base.getDay();
+  let baseDate;
+  if (value) {
+    baseDate = new Date(`${value}T00:00:00+05:30`);
+  } else {
+    baseDate = new Date();
+  }
+  
+  const dayName = getISTParts(baseDate).day;
+  const day = DAYS.indexOf(dayName);
   const diffToMonday = (day === 0 ? -6 : 1) - day;
-  const monday = new Date(base);
-  monday.setDate(base.getDate() + diffToMonday);
-  monday.setHours(0, 0, 0, 0);
+  
+  const { dateStr } = getISTParts(baseDate);
+  const istMidnight = new Date(`${dateStr}T00:00:00+05:30`);
+  
+  const monday = new Date(istMidnight.getTime() + diffToMonday * 24 * 60 * 60 * 1000);
   return monday;
 };
 
 const getDateForDay = (weekStart, dayOfWeek) => {
   const idx = DAYS.indexOf(dayOfWeek);
-  const date = new Date(weekStart);
-  date.setDate(weekStart.getDate() + (idx === 0 ? 6 : idx - 1));
-  return date;
+  const diff = idx === 0 ? 6 : idx - 1;
+  return new Date(weekStart.getTime() + diff * 24 * 60 * 60 * 1000);
 };
 
-const isFutureWeek = (weekStart) => weekStart > getWeekStartDate();
+const isFutureWeek = (weekStart) => {
+  const currentWeekStart = getWeekStartDate();
+  return weekStart.getTime() > currentWeekStart.getTime();
+};
 
 export const createSchedule = async (req, res) => {
   const { subject_id, classroom_id, day_of_week, start_time, end_time, teacher_id, year, camera_id, stream } = req.body;
@@ -57,7 +99,7 @@ export const createSchedule = async (req, res) => {
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
       AND s.status IN ('active', 'scheduled')
-      AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
+      AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
     `, [classroom_id, final_teacher_id, year || '1', stream || 'CSE', day_of_week, start_time, end_time]);
 
@@ -272,7 +314,7 @@ export const updateSchedule = async (req, res) => {
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE (s.classroom_id = $1 OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
       AND s.status IN ('active', 'scheduled')
-      AND TRIM(TO_CHAR(s.start_time, 'Day')) = $5
+      AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
     `, [classroom_id, teacher_id, original[0].year, original[0].stream, day_of_week, start_time, end_time]);
 
@@ -341,7 +383,7 @@ export const deleteSchedule = async (req, res) => {
         UPDATE sessions 
         SET status = 'cancelled'
         WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND teacher_id = $4))
-        AND start_time::date = CURRENT_DATE
+        AND (start_time AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
         AND is_custom = false
         RETURNING id
       `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);
@@ -427,7 +469,7 @@ export const cancelSchedule = async (req, res) => {
         UPDATE sessions 
         SET status = 'cancelled'
         WHERE (schedule_id = $1 OR (subject_id = $2 AND classroom_id = $3 AND teacher_id = $4))
-        AND start_time::date = CURRENT_DATE
+        AND (start_time AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date
         AND is_custom = false
         RETURNING *
       `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);

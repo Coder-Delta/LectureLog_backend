@@ -39,14 +39,20 @@ export const registerStudent = async (req, res) => {
 
     // 2. If no embedding provided, get it from AI Service (Legacy/Web flow)
     if (!embedding) {
-      const aiFormData = new FormData();
-      aiFormData.append('file', fs.createReadStream(imageFile.path));
+      try {
+        const aiFormData = new FormData();
+        aiFormData.append('file', fs.createReadStream(imageFile.path));
 
-      const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-        headers: aiFormData.getHeaders(),
-      });
+        const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+          headers: aiFormData.getHeaders(),
+          timeout: 8000
+        });
 
-      embedding = aiResponse.data.embedding;
+        embedding = aiResponse.data.embedding;
+      } catch (aiErr) {
+        console.error('AI Service Error:', aiErr.message);
+        throw new Error(`AI Recognition Service is unreachable or timed out (${aiErr.message}). Please ensure the local AI service is running and healthy.`);
+      }
     }
 
     if (!embedding || !Array.isArray(embedding)) {
@@ -223,14 +229,20 @@ export const updateStudent = async (req, res) => {
 
       // 2. If no embedding provided, get it from AI Service
       if (!embedding) {
-        const aiFormData = new FormData();
-        aiFormData.append('file', fs.createReadStream(imageFile.path));
+        try {
+          const aiFormData = new FormData();
+          aiFormData.append('file', fs.createReadStream(imageFile.path));
 
-        const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
-          headers: aiFormData.getHeaders(),
-        });
+          const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
+            headers: aiFormData.getHeaders(),
+            timeout: 8000
+          });
 
-        embedding = aiResponse.data.embedding;
+          embedding = aiResponse.data.embedding;
+        } catch (aiErr) {
+          console.error('AI Service Error:', aiErr.message);
+          throw new Error(`AI Recognition Service is unreachable or timed out (${aiErr.message}). Please ensure the local AI service is running and healthy.`);
+        }
       }
 
       if (!embedding || !Array.isArray(embedding)) {

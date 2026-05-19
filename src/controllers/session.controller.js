@@ -3,19 +3,49 @@ import axios from 'axios';
 import bcrypt from 'bcryptjs';
 import { sendDirectNotification, sendCohortNotification, sendRoleNotification } from '../services/notification.service.js';
 
-// ── Helper: Get start and end of the CURRENT week (Mon–Sun) ──────────────────
+// ── Helper: Extract date/time parts in India Standard Time ──────────────────
+const getISTParts = (date = new Date()) => {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'long',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = formatter.formatToParts(date);
+  const getVal = (type) => parts.find(p => p.type === type).value;
+  return {
+    day: getVal('weekday'),
+    dateStr: `${getVal('year')}-${getVal('month')}-${getVal('day')}`,
+    timeHM: `${getVal('hour')}:${getVal('minute')}`,
+    timeHMS: `${getVal('hour')}:${getVal('minute')}:${getVal('second')}`
+  };
+};
+
 const getCurrentWeekRange = (value = null) => {
-  const now = value ? new Date(`${value}T00:00:00`) : new Date();
-  const day = now.getDay(); // 0=Sun, 1=Mon...
+  let baseDate;
+  if (value) {
+    baseDate = new Date(`${value}T00:00:00+05:30`);
+  } else {
+    baseDate = new Date();
+  }
+  
+  const dayName = getISTParts(baseDate).day;
+  const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const day = daysOfWeek.indexOf(dayName);
+  
   const diffToMonday = (day === 0 ? -6 : 1) - day;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday);
-  monday.setHours(0, 0, 0, 0);
-
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-
+  
+  const { dateStr } = getISTParts(baseDate);
+  const istMidnight = new Date(`${dateStr}T00:00:00+05:30`);
+  
+  const monday = new Date(istMidnight.getTime() + diffToMonday * 24 * 60 * 60 * 1000);
+  const sunday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+  
   return { startOfWeek: monday, endOfWeek: sunday };
 };
 
@@ -146,11 +176,13 @@ export const startSession = async (req, res) => {
     const start_time = req.body.start_time ? new Date(req.body.start_time) : new Date();
     const end_time = req.body.end_time ? new Date(req.body.end_time) : new Date(start_time.getTime() + (duration || 50) * 60000);
     
-    // Day of the week for the specific date provided
-    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const sessionDay = days[start_time.getDay()];
-    const startStr = start_time.toTimeString().split(' ')[0];
-    const endStr = end_time.toTimeString().split(' ')[0];
+    // Day of the week and dates in IST
+    const startIST = getISTParts(start_time);
+    const endIST = getISTParts(end_time);
+    const sessionDay = startIST.day;
+    const startStr = startIST.timeHMS;
+    const endStr = endIST.timeHMS;
+    const sessionDateStr = startIST.dateStr;
 
     // 0. Validation: Cannot add a session that has already passed
     const now_ts = new Date();
@@ -169,8 +201,8 @@ export const startSession = async (req, res) => {
           s.teacher_id = $2 OR 
           (s.year = $3 AND s.stream = $4)
         )
-        AND s.start_time < ($5::timestamp - interval '1 second')
-        AND s.end_time > ($6::timestamp + interval '1 second')
+        AND s.start_time < ($5::timestamptz - interval '1 second')
+        AND s.end_time > ($6::timestamptz + interval '1 second')
         AND s.status IN ('active', 'scheduled')
     `, [classroom_id, teacher_id, year, stream, end_time, start_time]);
 
@@ -199,7 +231,7 @@ export const startSession = async (req, res) => {
         AND s.start_time < $8::time AND s.end_time > $2::time
         AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
         AND cc.id IS NULL
-    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, start_time, endStr]);
+    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, sessionDateStr, endStr]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -468,13 +500,11 @@ export const getSessions = async (req, res) => {
 
   try {
     // 1. Get current IST context for virtual routine generation
-    const istOffset = 5.5 * 60 * 60 * 1000;
     const now = new Date();
-    
-    // Reliable local time logic
-    const istDateStr = now.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Kolkata' });
-    const currentTimeHM = now.toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' }).substring(0, 5); // HH:MM
+    const istContext = getISTParts(now);
+    const istDateStr = istContext.dateStr;
+    const currentDay = istContext.day;
+    const currentTimeHM = istContext.timeHM;
 
     const organization_id = req.user?.organization_id || req.query.organization_id;
     if (!organization_id) {
@@ -504,7 +534,7 @@ export const getSessions = async (req, res) => {
          (s.is_custom = true AND ${statusClause} AND ${customDateClause})
        )
        AND c.organization_id = $3
-    `;
+     `;
     
 
     if (year) { sessionParams.push(year); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
@@ -525,11 +555,11 @@ export const getSessions = async (req, res) => {
           SELECT 1 FROM timetable_week_entries t2
           WHERE t2.source_id = s.id 
             AND t2.source_type = 'regular'
-            AND t2.entry_date = CURRENT_DATE
+            AND t2.entry_date = $3
             AND t2.action IN ('cancelled', 'deleted')
         )
     `;
-    const scheduleParams = [currentDay, organization_id];
+    const scheduleParams = [currentDay, organization_id, istDateStr];
     if (year) { scheduleParams.push(year); scheduleQuery += ` AND s.year = $${scheduleParams.length}`; }
     if (stream) { scheduleParams.push(stream); scheduleQuery += ` AND s.stream = $${scheduleParams.length}`; }
 
@@ -547,7 +577,7 @@ export const getSessions = async (req, res) => {
           if (sess.classroom_id !== routine.classroom_id) return false;
 
           // Match time using IST strings for reliable cross-timezone comparison
-          const sessStartIST = new Date(sess.start_time).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'Asia/Kolkata' });
+          const sessStartIST = getISTParts(new Date(sess.start_time)).timeHM;
           const routineStartHM = routine.start_time.substring(0, 5); // HH:MM
           
           // Check if HH:MM matches or is within a 2-minute drift
