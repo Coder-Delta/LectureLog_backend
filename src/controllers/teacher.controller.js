@@ -185,11 +185,21 @@ export const addTeacherAngles = async (req, res) => {
 export const getTeachers = async (req, res) => {
   try {
     const { rows: teachers } = await pool.query(
-      `SELECT id, name, email, college_id, image_url, created_at,
-        COALESCE(json_array_length(face_embeddings), CASE WHEN face_embedding IS NOT NULL THEN 1 ELSE 0 END) as angle_count
+      `SELECT id, name, email, college_id, image_url, created_at, face_embedding, face_embeddings
         FROM users WHERE role = 'teacher' ORDER BY created_at DESC`
     );
-    res.json(teachers);
+    const processedTeachers = teachers.map(t => {
+      let angleCount = 0;
+      if (t.face_embeddings && Array.isArray(t.face_embeddings)) {
+        angleCount = t.face_embeddings.length;
+      } else if (t.face_embedding) {
+        angleCount = 1;
+      }
+      // Don't send embeddings back to client
+      const { face_embedding, face_embeddings, ...rest } = t;
+      return { ...rest, angle_count: angleCount };
+    });
+    res.json(processedTeachers);
   } catch (err) {
     console.error('Error fetching teachers:', err);
     res.status(500).json({ message: 'Error fetching teachers', error: err.message });

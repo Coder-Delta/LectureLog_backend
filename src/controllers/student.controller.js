@@ -209,11 +209,21 @@ export const getStudents = async (req, res) => {
 
     const { rows: students } = await pool.query(
       `SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings,
-        COALESCE(json_array_length(face_embeddings), CASE WHEN face_embedding IS NOT NULL THEN 1 ELSE 0 END) as angle_count,
         image_url, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC`,
       [organization_id]
     );
-    res.json(students);
+
+    const processedStudents = students.map(s => {
+      let angleCount = 0;
+      if (s.face_embeddings && Array.isArray(s.face_embeddings)) {
+        angleCount = s.face_embeddings.length;
+      } else if (s.face_embedding) {
+        angleCount = 1;
+      }
+      return { ...s, angle_count: angleCount };
+    });
+
+    res.json(processedStudents);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
