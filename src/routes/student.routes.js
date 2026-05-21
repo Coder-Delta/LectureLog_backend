@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { registerStudent, getStudents, getMyAttendance, getMyStats, deleteStudent, updateStudent, getMyProfile } from '../controllers/student.controller.js';
+import { registerStudent, getStudents, getMyAttendance, getMyStats, deleteStudent, updateStudent, getMyProfile, addStudentAngles } from '../controllers/student.controller.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.middleware.js';
 
 const upload = multer({ dest: 'uploads/' });
@@ -14,5 +14,6 @@ router.get('/my-attendance', authenticateToken, getMyAttendance);
 router.get('/my-stats', authenticateToken, getMyStats);
 router.delete('/:id', authenticateToken, authorizeRole('admin'), deleteStudent);
 router.put('/:id', authenticateToken, authorizeRole('admin'), upload.single('image'), updateStudent);
+router.patch('/:id/angles', authenticateToken, authorizeRole('teacher', 'admin'), upload.array('images', 4), addStudentAngles);
 
 export default router;

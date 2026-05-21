@@ -27,27 +27,39 @@ export const registerStudent = async (req, res) => {
 
   try {
     let embedding = null;
+    // face_embeddings is an array of embeddings (multi-angle), sent as JSON string from frontend
+    let embeddingsArray = null;
 
-    // 1. Check if embedding is already provided (from Electron App)
-    if (req.body.face_embedding) {
+    // 1. Check if multi-angle embeddings array is provided (new flow)
+    if (req.body.face_embeddings) {
+      try {
+        embeddingsArray = JSON.parse(req.body.face_embeddings);
+      } catch (e) { embeddingsArray = null; }
+    }
+
+    // 2. Check if single embedding is provided (Electron single-photo legacy flow)
+    if (!embeddingsArray && req.body.face_embedding) {
       try {
         embedding = JSON.parse(req.body.face_embedding);
+        if (Array.isArray(embedding) && Array.isArray(embedding[0])) {
+          // It's actually a multi-angle array
+          embeddingsArray = embedding;
+          embedding = embeddingsArray[0];
+        }
       } catch (e) {
         embedding = req.body.face_embedding;
       }
     }
 
-    // 2. If no embedding provided, get it from AI Service (Legacy/Web flow)
-    if (!embedding) {
+    // 3. If nothing provided, get embedding from AI Service (web/fallback flow)
+    if (!embeddingsArray && !embedding) {
       try {
         const aiFormData = new FormData();
         aiFormData.append('file', fs.createReadStream(imageFile.path));
-
         const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/embed`, aiFormData, {
           headers: aiFormData.getHeaders(),
           timeout: 8000
         });
-
         embedding = aiResponse.data.embedding;
       } catch (aiErr) {
         console.error('AI Service Error:', aiErr.message);
@@ -55,7 +67,9 @@ export const registerStudent = async (req, res) => {
       }
     }
 
-    if (!embedding || !Array.isArray(embedding)) {
+    // For backward compat: primary embedding is first of array, or the single one
+    const primaryEmbedding = embeddingsArray ? embeddingsArray[0] : embedding;
+    if (!primaryEmbedding || !Array.isArray(primaryEmbedding)) {
       throw new Error('AI Service failed to generate a valid face embedding.');
     }
 
@@ -64,10 +78,10 @@ export const registerStudent = async (req, res) => {
       folder: 'Merge/students',
     });
 
-    // 3. Save to PostgreSQL (Including the face vector and Cloudinary info)
+    // 3. Save to PostgreSQL — store both single embedding (backward compat) AND full array
     const organization_id = req.user.organization_id;
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, image_url, cloudinary_id, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
       [
         name,
         email,
@@ -75,7 +89,8 @@ export const registerStudent = async (req, res) => {
         college_id,
         year,
         stream,
-        JSON.stringify(embedding),
+        JSON.stringify(primaryEmbedding),
+        JSON.stringify(embeddingsArray || [primaryEmbedding]),
         cloudinaryResponse.secure_url,
         cloudinaryResponse.public_id,
         organization_id
@@ -105,6 +120,82 @@ export const registerStudent = async (req, res) => {
 };
 
 /**
+ * Add additional face angle embeddings to an existing student.
+ * Accepts multiple image files. Generates embeddings in parallel and
+ * merges them with the student's existing face_embeddings array.
+ */
+export const addStudentAngles = async (req, res) => {
+  const { id } = req.params;
+  const imageFiles = req.files;
+  const AI_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001';
+
+  // Accept either uploaded files OR pre-computed embeddings from Electron
+  let newEmbeddings = [];
+
+  if (req.body.face_embeddings) {
+    try {
+      newEmbeddings = JSON.parse(req.body.face_embeddings);
+    } catch (e) { newEmbeddings = []; }
+  }
+
+  if (newEmbeddings.length === 0 && (!imageFiles || imageFiles.length === 0)) {
+    return res.status(400).json({ message: 'At least one image or embedding is required' });
+  }
+
+  try {
+    // Generate embeddings for all uploaded files in parallel (fast!)
+    if (imageFiles && imageFiles.length > 0) {
+      const embedTasks = imageFiles.map(async (imgFile) => {
+        try {
+          const aiFormData = new FormData();
+          aiFormData.append('file', fs.createReadStream(imgFile.path));
+          const aiResponse = await axios.post(`${AI_URL}/embed`, aiFormData, {
+            headers: aiFormData.getHeaders(),
+            timeout: 15000
+          });
+          return aiResponse.data.embedding;
+        } catch (e) {
+          console.error(`Embedding failed for ${imgFile.originalname}:`, e.message);
+          return null;
+        } finally {
+          if (fs.existsSync(imgFile.path)) fs.unlinkSync(imgFile.path);
+        }
+      });
+      const results = await Promise.all(embedTasks);
+      newEmbeddings = [...newEmbeddings, ...results.filter(Boolean)];
+    }
+
+    if (newEmbeddings.length === 0) {
+      return res.status(422).json({ message: 'Could not extract valid embeddings from the provided images.' });
+    }
+
+    // Fetch existing embeddings and merge
+    const { rows } = await pool.query('SELECT face_embeddings, face_embedding FROM students WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Student not found' });
+
+    let existing = rows[0].face_embeddings || [];
+    if (!Array.isArray(existing)) existing = [];
+    // Also migrate legacy single embedding into the array if not already done
+    if (existing.length === 0 && rows[0].face_embedding) {
+      existing = [rows[0].face_embedding];
+    }
+
+    const merged = [...existing, ...newEmbeddings];
+
+    await pool.query(
+      'UPDATE students SET face_embeddings = $1 WHERE id = $2',
+      [JSON.stringify(merged), id]
+    );
+
+    res.json({ message: `${newEmbeddings.length} angle(s) added. Total: ${merged.length}`, total_angles: merged.length });
+  } catch (err) {
+    console.error('Add angles error:', err);
+    if (imageFiles) imageFiles.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * Retrieves all registered students from the database.
  * Used primarily for the admin dashboard.
  */
@@ -117,7 +208,9 @@ export const getStudents = async (req, res) => {
     }
 
     const { rows: students } = await pool.query(
-      'SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, image_url, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC',
+      `SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings,
+        COALESCE(json_array_length(face_embeddings), CASE WHEN face_embedding IS NOT NULL THEN 1 ELSE 0 END) as angle_count,
+        image_url, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC`,
       [organization_id]
     );
     res.json(students);

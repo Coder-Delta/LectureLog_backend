@@ -119,12 +119,75 @@ export const registerTeacher = async (req, res) => {
 };
 
 /**
+ * Add additional face angle embeddings to an existing teacher.
+ * Accepts multiple image files, generates embeddings in parallel, merges with existing.
+ */
+export const addTeacherAngles = async (req, res) => {
+  const { id } = req.params;
+  const imageFiles = req.files;
+  const AI_URL = process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001';
+
+  let newEmbeddings = [];
+  if (req.body.face_embeddings) {
+    try { newEmbeddings = JSON.parse(req.body.face_embeddings); } catch (e) { newEmbeddings = []; }
+  }
+
+  if (newEmbeddings.length === 0 && (!imageFiles || imageFiles.length === 0)) {
+    return res.status(400).json({ message: 'At least one image or embedding is required' });
+  }
+
+  try {
+    if (imageFiles && imageFiles.length > 0) {
+      const embedTasks = imageFiles.map(async (imgFile) => {
+        try {
+          const aiFormData = new FormData();
+          aiFormData.append('file', fs.createReadStream(imgFile.path));
+          const aiResponse = await axios.post(`${AI_URL}/embed`, aiFormData, {
+            headers: aiFormData.getHeaders(), timeout: 15000
+          });
+          return aiResponse.data.embedding;
+        } catch (e) {
+          console.error(`Embedding failed for ${imgFile.originalname}:`, e.message);
+          return null;
+        } finally {
+          if (fs.existsSync(imgFile.path)) fs.unlinkSync(imgFile.path);
+        }
+      });
+      const results = await Promise.all(embedTasks);
+      newEmbeddings = [...newEmbeddings, ...results.filter(Boolean)];
+    }
+
+    if (newEmbeddings.length === 0) {
+      return res.status(422).json({ message: 'Could not extract valid embeddings from the provided images.' });
+    }
+
+    const { rows } = await pool.query("SELECT face_embeddings, face_embedding FROM users WHERE id = $1 AND role = 'teacher'", [id]);
+    if (rows.length === 0) return res.status(404).json({ message: 'Teacher not found' });
+
+    let existing = rows[0].face_embeddings || [];
+    if (!Array.isArray(existing)) existing = [];
+    if (existing.length === 0 && rows[0].face_embedding) existing = [rows[0].face_embedding];
+
+    const merged = [...existing, ...newEmbeddings];
+    await pool.query('UPDATE users SET face_embeddings = $1 WHERE id = $2', [JSON.stringify(merged), id]);
+
+    res.json({ message: `${newEmbeddings.length} angle(s) added. Total: ${merged.length}`, total_angles: merged.length });
+  } catch (err) {
+    console.error('Add teacher angles error:', err);
+    if (imageFiles) imageFiles.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
  * Get all teachers
  */
 export const getTeachers = async (req, res) => {
   try {
     const { rows: teachers } = await pool.query(
-      "SELECT id, name, email, college_id, image_url, created_at FROM users WHERE role = 'teacher' ORDER BY created_at DESC"
+      `SELECT id, name, email, college_id, image_url, created_at,
+        COALESCE(json_array_length(face_embeddings), CASE WHEN face_embedding IS NOT NULL THEN 1 ELSE 0 END) as angle_count
+        FROM users WHERE role = 'teacher' ORDER BY created_at DESC`
     );
     res.json(teachers);
   } catch (err) {
@@ -132,6 +195,7 @@ export const getTeachers = async (req, res) => {
     res.status(500).json({ message: 'Error fetching teachers', error: err.message });
   }
 };
+
 
 /**
  * Delete a teacher

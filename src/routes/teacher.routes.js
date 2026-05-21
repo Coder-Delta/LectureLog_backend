@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import multer from 'multer';
 import { authenticateToken } from '../middleware/auth.middleware.js';
 import {
@@ -6,7 +6,8 @@ import {
   updateTeacher,
   getTeachers,
   deleteTeacher,
-  getMyProfile
+  getMyProfile,
+  addTeacherAngles
 } from '../controllers/teacher.controller.js';
 
 const router = express.Router();
@@ -19,5 +20,6 @@ router.post('/', authenticateToken, upload.single('image'), registerTeacher);
 router.put('/:id', authenticateToken, upload.single('image'), updateTeacher);
 router.get('/', authenticateToken, getTeachers);
 router.delete('/:id', authenticateToken, deleteTeacher);
+router.patch('/:id/angles', authenticateToken, upload.array('images', 4), addTeacherAngles);
 
 export default router;
