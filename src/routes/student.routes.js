@@ -6,14 +6,14 @@ import { authenticateToken, authorizeRole } from '../middleware/auth.middleware.
 const upload = multer({ dest: 'uploads/' });
 const router = express.Router();
 
-router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), upload.single('image'), registerStudent);
+router.post('/', authenticateToken, authorizeRole('teacher', 'admin'), upload.any(), registerStudent);
 router.get('/public', getStudents);
 router.get('/', authenticateToken, getStudents);
 router.get('/me', authenticateToken, getMyProfile);
 router.get('/my-attendance', authenticateToken, getMyAttendance);
 router.get('/my-stats', authenticateToken, getMyStats);
 router.delete('/:id', authenticateToken, authorizeRole('admin'), deleteStudent);
-router.put('/:id', authenticateToken, authorizeRole('admin'), upload.single('image'), updateStudent);
-router.patch('/:id/angles', authenticateToken, authorizeRole('teacher', 'admin'), upload.array('images', 4), addStudentAngles);
+router.put('/:id', authenticateToken, authorizeRole('admin'), upload.any(), updateStudent);
+router.patch('/:id/angles', authenticateToken, authorizeRole('teacher', 'admin'), upload.any(), addStudentAngles);
 
 export default router;

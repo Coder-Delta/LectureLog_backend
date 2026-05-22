@@ -57,6 +57,7 @@ const initDb = async () => {
 
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS face_embeddings JSONB;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS angle_images JSONB DEFAULT '{}'::jsonb;
     `);
 
     // ── Admin Session & Push Notification Tracking ──
@@ -107,6 +108,7 @@ const initDb = async () => {
     await client.query(`
       ALTER TABLE students ADD COLUMN IF NOT EXISTS cloudinary_id VARCHAR(255);
       ALTER TABLE students ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS angle_images JSONB DEFAULT '{}'::jsonb;
     `);
 
     // Multi-angle face embeddings: stores array of 512-d vectors [[front],[left],[right],[down]]

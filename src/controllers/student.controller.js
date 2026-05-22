@@ -19,7 +19,7 @@ dotenv.config();
  */
 export const registerStudent = async (req, res) => {
   const { name, email, roll_number, college_id, year, stream } = req.body;
-  const imageFile = req.file;
+  const imageFile = req.files ? req.files.find(f => f.fieldname === 'image') : req.file;
 
   if (!imageFile) {
     return res.status(400).json({ message: 'Student photo is required for registration' });
@@ -78,10 +78,20 @@ export const registerStudent = async (req, res) => {
       folder: 'Merge/students',
     });
 
+    // 2.5 Upload extra angles to Cloudinary
+    const extraImages = req.files ? req.files.filter(f => f.fieldname.startsWith('image_')) : [];
+    const angleImages = {};
+    for (const img of extraImages) {
+      const angleKey = img.fieldname.replace('image_', '');
+      const cRes = await cloudinary.uploader.upload(img.path, { folder: 'Merge/students' });
+      angleImages[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+      if (fs.existsSync(img.path)) fs.unlinkSync(img.path);
+    }
+
     // 3. Save to PostgreSQL — store both single embedding (backward compat) AND full array
     const organization_id = req.user.organization_id;
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id, angle_images) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
       [
         name,
         email,
@@ -93,7 +103,8 @@ export const registerStudent = async (req, res) => {
         JSON.stringify(embeddingsArray || [primaryEmbedding]),
         cloudinaryResponse.secure_url,
         cloudinaryResponse.public_id,
-        organization_id
+        organization_id,
+        JSON.stringify(angleImages)
       ]
     );
     const studentId = result.rows[0].id;
@@ -110,6 +121,10 @@ export const registerStudent = async (req, res) => {
       role: 'student',
       organization_id
     });
+
+    // Notify AI service to refresh its cache so the active session recognizes the new student immediately
+    axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:8001'}/system/refresh`)
+      .catch(e => console.warn('[System Sync] AI Refresh failed or no active AI service', e.message));
 
     res.status(201).json({ message: 'Student registered successfully', studentId, image_url: cloudinaryResponse.secure_url });
   } catch (err) {
@@ -143,19 +158,28 @@ export const addStudentAngles = async (req, res) => {
   }
 
   try {
+    let uploadedAngles = {};
+
     // Generate embeddings for all uploaded files in parallel (fast!)
     if (imageFiles && imageFiles.length > 0) {
       const embedTasks = imageFiles.map(async (imgFile) => {
         try {
+          // 1. Get Embedding
           const aiFormData = new FormData();
           aiFormData.append('file', fs.createReadStream(imgFile.path));
           const aiResponse = await axios.post(`${AI_URL}/embed`, aiFormData, {
             headers: aiFormData.getHeaders(),
             timeout: 15000
           });
+          
+          // 2. Upload to Cloudinary
+          const angleKey = imgFile.fieldname.replace('image_', '');
+          const cRes = await cloudinary.uploader.upload(imgFile.path, { folder: 'Merge/students' });
+          uploadedAngles[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+
           return aiResponse.data.embedding;
         } catch (e) {
-          console.error(`Embedding failed for ${imgFile.originalname}:`, e.message);
+          console.error(`Processing failed for ${imgFile.originalname}:`, e.message);
           return null;
         } finally {
           if (fs.existsSync(imgFile.path)) fs.unlinkSync(imgFile.path);
@@ -170,7 +194,7 @@ export const addStudentAngles = async (req, res) => {
     }
 
     // Fetch existing embeddings and merge
-    const { rows } = await pool.query('SELECT face_embeddings, face_embedding FROM students WHERE id = $1', [id]);
+    const { rows } = await pool.query('SELECT face_embeddings, face_embedding, angle_images FROM students WHERE id = $1', [id]);
     if (rows.length === 0) return res.status(404).json({ message: 'Student not found' });
 
     let existing = rows[0].face_embeddings || [];
@@ -181,13 +205,26 @@ export const addStudentAngles = async (req, res) => {
     }
 
     const merged = [...existing, ...newEmbeddings];
+    
+    let currentAngleImages = rows[0].angle_images || {};
+    // Merge new uploaded angles, delete old ones if overwritten
+    for (const [key, data] of Object.entries(uploadedAngles)) {
+      if (currentAngleImages[key] && currentAngleImages[key].id) {
+        await cloudinary.uploader.destroy(currentAngleImages[key].id).catch(() => {});
+      }
+      currentAngleImages[key] = data;
+    }
 
     await pool.query(
-      'UPDATE students SET face_embeddings = $1 WHERE id = $2',
-      [JSON.stringify(merged), id]
+      'UPDATE students SET face_embeddings = $1, angle_images = $2 WHERE id = $3',
+      [JSON.stringify(merged), JSON.stringify(currentAngleImages), id]
     );
 
-    res.json({ message: `${newEmbeddings.length} angle(s) added. Total: ${merged.length}`, total_angles: merged.length });
+    // Notify AI service to instantly reload the student encodings
+    axios.post(`${AI_URL}/system/refresh`)
+      .catch(e => console.warn('[System Sync] AI Refresh failed or no active AI service', e.message));
+
+    res.json({ message: `${newEmbeddings.length} new angle(s) added successfully. Total angles: ${merged.length}`, total_angles: merged.length });
   } catch (err) {
     console.error('Add angles error:', err);
     if (imageFiles) imageFiles.forEach(f => { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); });
@@ -281,14 +318,22 @@ export const getMyStats = async (req, res) => {
 export const deleteStudent = async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Get Cloudinary ID from DB
-    const studentResult = await pool.query('SELECT cloudinary_id FROM students WHERE id = $1', [id]);
+    // 1. Get Cloudinary ID and angle images from DB
+    const studentResult = await pool.query('SELECT cloudinary_id, angle_images FROM students WHERE id = $1', [id]);
     
     if (studentResult.rowCount > 0) {
-      const { cloudinary_id } = studentResult.rows[0];
+      const { cloudinary_id, angle_images } = studentResult.rows[0];
       if (cloudinary_id) {
-        // Delete from Cloudinary
-        await cloudinary.uploader.destroy(cloudinary_id);
+        // Delete main image from Cloudinary
+        await cloudinary.uploader.destroy(cloudinary_id).catch(() => {});
+      }
+      
+      if (angle_images) {
+        for (const key in angle_images) {
+          if (angle_images[key] && angle_images[key].id) {
+            await cloudinary.uploader.destroy(angle_images[key].id).catch(() => {});
+          }
+        }
       }
     }
 
@@ -312,11 +357,13 @@ export const deleteStudent = async (req, res) => {
 export const updateStudent = async (req, res) => {
   const { id } = req.params;
   const { name, email, roll_number, college_id, year, stream } = req.body;
-  const imageFile = req.file;
+  const imageFile = req.files ? req.files.find(f => f.fieldname === 'image') : req.file;
+  const extraImages = req.files ? req.files.filter(f => f.fieldname.startsWith('image_')) : [];
 
   try {
     let updateQuery = 'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6';
     let queryParams = [name, email, roll_number, college_id, year, stream];
+    let paramIndex = 7;
     
     if (imageFile) {
       let embedding = null;
@@ -364,12 +411,36 @@ export const updateStudent = async (req, res) => {
       }
 
       // 4. Update query with image and embedding info
-      updateQuery += ', face_embedding = $7, image_url = $8, cloudinary_id = $9 WHERE id = $10 RETURNING id';
-      queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id, id);
-    } else {
-      updateQuery += ' WHERE id = $7 RETURNING id';
-      queryParams.push(id);
+      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}`;
+      queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id);
+      paramIndex += 3;
     }
+
+    if (extraImages.length > 0) {
+      // Get existing angle images to merge
+      const oldData = await pool.query('SELECT angle_images FROM students WHERE id = $1', [id]);
+      let currentAngleImages = oldData.rowCount > 0 && oldData.rows[0].angle_images ? oldData.rows[0].angle_images : {};
+      
+      for (const img of extraImages) {
+        const angleKey = img.fieldname.replace('image_', '');
+        
+        // Delete old angle image if exists
+        if (currentAngleImages[angleKey] && currentAngleImages[angleKey].id) {
+          await cloudinary.uploader.destroy(currentAngleImages[angleKey].id).catch(() => {});
+        }
+        
+        const cRes = await cloudinary.uploader.upload(img.path, { folder: 'Merge/students' });
+        currentAngleImages[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+        if (fs.existsSync(img.path)) fs.unlinkSync(img.path);
+      }
+      
+      updateQuery += `, angle_images = $${paramIndex}`;
+      queryParams.push(JSON.stringify(currentAngleImages));
+      paramIndex++;
+    }
+
+    updateQuery += ` WHERE id = $${paramIndex} RETURNING id`;
+    queryParams.push(id);
 
     const result = await pool.query(updateQuery, queryParams);
 

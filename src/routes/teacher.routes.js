@@ -16,10 +16,10 @@ const router = express.Router();
 const upload = multer({ dest: 'uploads/' });
 
 router.get('/me', authenticateToken, getMyProfile);
-router.post('/', authenticateToken, upload.single('image'), registerTeacher);
-router.put('/:id', authenticateToken, upload.single('image'), updateTeacher);
+router.post('/', authenticateToken, upload.any(), registerTeacher);
+router.put('/:id', authenticateToken, upload.any(), updateTeacher);
 router.get('/', authenticateToken, getTeachers);
 router.delete('/:id', authenticateToken, deleteTeacher);
-router.patch('/:id/angles', authenticateToken, upload.array('images', 4), addTeacherAngles);
+router.patch('/:id/angles', authenticateToken, upload.any(), addTeacherAngles);
 
 export default router;
