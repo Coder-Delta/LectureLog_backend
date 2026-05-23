@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { Resend } from 'resend';
+import { invalidateSessionCache } from '../middleware/auth.middleware.js';
 
 dotenv.config();
 
@@ -209,6 +210,9 @@ export const adminLogin = async (req, res) => {
       WHERE id = $4`,
       [sessionToken, deviceId, platform, rows[0].id]
     );
+
+    // Invalidate any stale in-memory cached session
+    invalidateSessionCache(rows[0].id);
 
     // Include session_token in JWT so middleware can verify active session
     const token = jwt.sign(
