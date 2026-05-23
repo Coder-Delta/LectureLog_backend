@@ -246,7 +246,7 @@ export const getStudents = async (req, res) => {
 
     const { rows: students } = await pool.query(
       `SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings,
-        image_url, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC`,
+        image_url, angle_images, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC`,
       [organization_id]
     );
 
