@@ -30,7 +30,18 @@ export const registerTeacher = async (req, res) => {
 
     // 1. Get embedding (Check if provided by Electron app first)
     let embedding = null;
-    if (req.body.face_embedding) {
+    let embeddingsArray = null;
+
+    if (req.body.face_embeddings) {
+      try {
+        embeddingsArray = JSON.parse(req.body.face_embeddings);
+        if (embeddingsArray && embeddingsArray.length > 0) {
+          embedding = embeddingsArray[0];
+        }
+      } catch (e) {
+        console.error('Failed to parse face_embeddings');
+      }
+    } else if (req.body.face_embedding) {
       try {
         embedding = JSON.parse(req.body.face_embedding);
       } catch (e) {
@@ -75,9 +86,9 @@ export const registerTeacher = async (req, res) => {
     }
 
     // 3. Save to PostgreSQL
-    const organization_id = req.user.organization_id;
+    const organization_id = req.user ? req.user.organization_id : null;
     const result = await pool.query(
-      'INSERT INTO users (name, email, password, role, college_id, face_embedding, image_url, cloudinary_id, organization_id, angle_images) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
+      'INSERT INTO users (name, email, password, role, college_id, face_embedding, image_url, cloudinary_id, organization_id, angle_images, face_embeddings) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
       [
         name, 
         email, 
@@ -88,7 +99,8 @@ export const registerTeacher = async (req, res) => {
         cloudinaryResponse.secure_url, 
         cloudinaryResponse.public_id,
         organization_id,
-        JSON.stringify(angleImages)
+        JSON.stringify(angleImages),
+        embeddingsArray ? JSON.stringify(embeddingsArray) : null
       ]
     );
     const teacherId = result.rows[0].id;
@@ -286,9 +298,19 @@ export const updateTeacher = async (req, res) => {
 
     if (imageFile) {
       let embedding = null;
+      let embeddingsArray = null;
 
       // 1. Check if embedding is already provided
-      if (req.body.face_embedding) {
+      if (req.body.face_embeddings) {
+        try {
+          embeddingsArray = JSON.parse(req.body.face_embeddings);
+          if (embeddingsArray && embeddingsArray.length > 0) {
+            embedding = embeddingsArray[0];
+          }
+        } catch (e) {
+          console.error('Failed to parse face_embeddings');
+        }
+      } else if (req.body.face_embedding) {
         try {
           embedding = JSON.parse(req.body.face_embedding);
         } catch (e) {
@@ -333,6 +355,12 @@ export const updateTeacher = async (req, res) => {
       updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}`;
       queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id);
       paramIndex += 3;
+      
+      if (embeddingsArray) {
+        updateQuery += `, face_embeddings = $${paramIndex}`;
+        queryParams.push(JSON.stringify(embeddingsArray));
+        paramIndex++;
+      }
     }
     
     if (extraImages.length > 0) {
