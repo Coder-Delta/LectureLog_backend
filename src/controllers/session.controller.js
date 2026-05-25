@@ -258,7 +258,7 @@ export const startSession = async (req, res) => {
 
     // Fetch names for the broadcast
     const { rows: meta } = await pool.query(`
-      SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name, u.image_url as teacher_image, u.organization_id
+      SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name, u.image_url as teacher_image, u.organization_id
       FROM subjects sub, classrooms c, users u
       WHERE sub.id = $1 AND c.id = $2 AND u.id = $3
     `, [subject_id, classroom_id, teacher_id]);
@@ -279,6 +279,8 @@ export const startSession = async (req, res) => {
       classroom_name: meta[0]?.classroom_name,
       camera_name: meta[0]?.camera_name,
       camera_url: meta[0]?.camera_url,
+      camera_type: meta[0]?.camera_type,
+      camera_quality: meta[0]?.camera_quality,
       teacher_name: meta[0]?.teacher_name
     });
 
@@ -523,7 +525,7 @@ export const getSessions = async (req, res) => {
     let sessionQuery = `
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
              s.start_time, s.end_time,
-             sub.name as subject_name, c.camera_url, c.camera_name, c.name as classroom_name, u.name as teacher_name
+             sub.name as subject_name, c.camera_url, c.camera_name, c.camera_type, c.camera_quality, c.name as classroom_name, u.name as teacher_name
        FROM sessions s
        LEFT JOIN subjects sub ON s.subject_id = sub.id
        LEFT JOIN classrooms c ON s.classroom_id = c.id
@@ -544,7 +546,7 @@ export const getSessions = async (req, res) => {
 
     // ── STEP 2: Fetch Today's Routine (virtual sessions for UI) ──
     let scheduleQuery = `
-      SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, u.name as teacher_name
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id
@@ -611,6 +613,8 @@ export const getSessions = async (req, res) => {
           teacher_name: routine.teacher_name,
           camera_name: routine.camera_name,
           camera_url: routine.camera_url,
+          camera_type: routine.camera_type || 'webcam',
+          camera_quality: routine.camera_quality || '720p',
           start_time: `${istDateStr}T${routine.start_time}+05:30`,
           end_time: `${istDateStr}T${routine.end_time}+05:30`,
           year: routine.year,

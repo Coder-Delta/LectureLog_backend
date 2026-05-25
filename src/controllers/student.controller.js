@@ -69,9 +69,8 @@ export const registerStudent = async (req, res) => {
 
     // For backward compat: primary embedding is first of array, or the single one
     const primaryEmbedding = embeddingsArray ? embeddingsArray[0] : embedding;
-    if (!primaryEmbedding || !Array.isArray(primaryEmbedding)) {
-      throw new Error('AI Service failed to generate a valid face embedding.');
-    }
+    // Soft registration: allow registration even without valid embeddings
+    // The student will be flagged as is_face_verified = false
 
     // 2. Upload to Cloudinary
     const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
@@ -90,8 +89,11 @@ export const registerStudent = async (req, res) => {
 
     // 3. Save to PostgreSQL — store both single embedding (backward compat) AND full array
     const organization_id = req.user.organization_id;
+    // Determine if the face is properly verified
+    const isFaceVerified = !!(primaryEmbedding && Array.isArray(primaryEmbedding) && primaryEmbedding.length > 0);
+
     const result = await pool.query(
-      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id, angle_images) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
+      'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id, angle_images, is_face_verified) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id',
       [
         name,
         email,
@@ -104,7 +106,8 @@ export const registerStudent = async (req, res) => {
         cloudinaryResponse.secure_url,
         cloudinaryResponse.public_id,
         organization_id,
-        JSON.stringify(angleImages)
+        JSON.stringify(angleImages),
+        isFaceVerified
       ]
     );
     const studentId = result.rows[0].id;
@@ -244,9 +247,14 @@ export const getStudents = async (req, res) => {
       return res.status(400).json({ message: 'Organization context missing' });
     }
 
+    // When the AI service calls with ?verified_only=true, exclude unverified students
+    // so garbage embeddings never enter the AI recognition pipeline
+    const verifiedOnly = req.query.verified_only === 'true';
+    const verifiedClause = verifiedOnly ? ' AND is_face_verified = true' : '';
+
     const { rows: students } = await pool.query(
       `SELECT id, name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings,
-        image_url, angle_images, created_at FROM students WHERE organization_id = $1 ORDER BY created_at DESC`,
+        image_url, angle_images, is_face_verified, created_at FROM students WHERE organization_id = $1${verifiedClause} ORDER BY created_at DESC`,
       [organization_id]
     );
 
@@ -364,12 +372,23 @@ export const updateStudent = async (req, res) => {
     let updateQuery = 'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6';
     let queryParams = [name, email, roll_number, college_id, year, stream];
     let paramIndex = 7;
+    let isFaceVerified = true; // Default to true unless we specifically detect failure
     
     if (imageFile) {
       let embedding = null;
+      let embeddingsArray = null;
 
-      // 1. Check if embedding is already provided
-      if (req.body.face_embedding) {
+      // 1. Check if embedding is already provided (Electron app)
+      if (req.body.face_embeddings) {
+        try {
+          embeddingsArray = JSON.parse(req.body.face_embeddings);
+          if (embeddingsArray && embeddingsArray.length > 0) {
+            embedding = embeddingsArray[0];
+          }
+        } catch (e) {
+          console.error('Failed to parse face_embeddings in update');
+        }
+      } else if (req.body.face_embedding) {
         try {
           embedding = JSON.parse(req.body.face_embedding);
         } catch (e) {
@@ -377,7 +396,7 @@ export const updateStudent = async (req, res) => {
         }
       }
 
-      // 2. If no embedding provided, get it from AI Service
+      // 2. If no embedding provided, get it from AI Service (Web fallback)
       if (!embedding) {
         try {
           const aiFormData = new FormData();
@@ -390,14 +409,13 @@ export const updateStudent = async (req, res) => {
 
           embedding = aiResponse.data.embedding;
         } catch (aiErr) {
-          console.error('AI Service Error:', aiErr.message);
-          throw new Error(`AI Recognition Service is unreachable or timed out (${aiErr.message}). Please ensure the local AI service is running and healthy.`);
+          console.warn('AI Service Error during update:', aiErr.message);
+          // Soft fail: don't throw, just leave embedding as null
         }
       }
 
-      if (!embedding || !Array.isArray(embedding)) {
-        throw new Error('AI Service failed to generate a valid face embedding.');
-      }
+      // Check verification status
+      isFaceVerified = !!(embedding && Array.isArray(embedding) && embedding.length > 0);
 
       // 2. Upload new image to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
@@ -411,9 +429,18 @@ export const updateStudent = async (req, res) => {
       }
 
       // 4. Update query with image and embedding info
-      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}`;
-      queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id);
-      paramIndex += 3;
+      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}, face_embeddings = $${paramIndex+3}, is_face_verified = $${paramIndex+4}`;
+      queryParams.push(
+        embedding ? JSON.stringify(embedding) : null, 
+        cloudinaryResponse.secure_url, 
+        cloudinaryResponse.public_id,
+        embeddingsArray ? JSON.stringify(embeddingsArray) : null,
+        isFaceVerified
+      );
+      paramIndex += 5;
+    } else {
+      // If no image is provided, we might still want to update is_face_verified if the user specifically requested it
+      // But usually, an update without an image doesn't change verification status.
     }
 
     if (extraImages.length > 0) {

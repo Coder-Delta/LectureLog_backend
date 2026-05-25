@@ -1,7 +1,15 @@
-﻿import pool from '../config/database.config.js';
+import pool from '../config/database.config.js';
 
 export const processRecognition = async (req, res) => {
   const { student_id, session_id, confidence } = req.body;
+
+  // Server-side confidence floor — reject weak AI matches as a safety net
+  const MIN_CONFIDENCE = 0.60;
+  if (!confidence || confidence < MIN_CONFIDENCE) {
+    return res.status(400).json({ 
+      message: `Confidence too low (${(confidence || 0).toFixed(2)}). Minimum required: ${MIN_CONFIDENCE}` 
+    });
+  }
 
   try {
     let sessionId = session_id;

@@ -21,7 +21,7 @@ export const getClassrooms = async (req, res) => {
  * Add a new classroom
  */
 export const addClassroom = async (req, res) => {
-  const { name, camera_url, camera_name } = req.body;
+  const { name, camera_url, camera_name, camera_type, camera_quality } = req.body;
   const { organization_id } = req.user;
 
   if (!name || !camera_url) {
@@ -39,8 +39,8 @@ export const addClassroom = async (req, res) => {
     }
 
     const result = await pool.query(
-      'INSERT INTO classrooms (name, camera_url, camera_name, organization_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [name, camera_url, camera_name, organization_id]
+      'INSERT INTO classrooms (name, camera_url, camera_name, camera_type, camera_quality, organization_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [name, camera_url, camera_name, camera_type || 'webcam', camera_quality || '720p', organization_id]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -57,7 +57,7 @@ export const addClassroom = async (req, res) => {
  */
 export const updateClassroom = async (req, res) => {
   const { id } = req.params;
-  const { name, camera_url, camera_name } = req.body;
+  const { name, camera_url, camera_name, camera_type, camera_quality } = req.body;
   const { organization_id } = req.user;
 
   if (!name || !camera_url) {
@@ -75,8 +75,8 @@ export const updateClassroom = async (req, res) => {
     }
 
     const result = await pool.query(
-      'UPDATE classrooms SET name = $1, camera_url = $2, camera_name = $3 WHERE id = $4 AND organization_id = $5 RETURNING *',
-      [name, camera_url, camera_name, id, organization_id]
+      'UPDATE classrooms SET name = $1, camera_url = $2, camera_name = $3, camera_type = $4, camera_quality = $5 WHERE id = $6 AND organization_id = $7 RETURNING *',
+      [name, camera_url, camera_name, camera_type || 'webcam', camera_quality || '720p', id, organization_id]
     );
 
     if (result.rowCount === 0) {

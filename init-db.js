@@ -60,6 +60,10 @@ const initDb = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS angle_images JSONB DEFAULT '{}'::jsonb;
     `);
 
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_face_verified BOOLEAN NOT NULL DEFAULT TRUE;
+    `);
+
     // ── Admin Session & Push Notification Tracking ──
     await client.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_session_token VARCHAR(64);
@@ -117,6 +121,10 @@ const initDb = async () => {
     `);
 
     await client.query(`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_face_verified BOOLEAN NOT NULL DEFAULT TRUE;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS subjects (
         id SERIAL PRIMARY KEY,
         name VARCHAR(255) NOT NULL,
@@ -162,6 +170,14 @@ const initDb = async () => {
 
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='classrooms' AND column_name='camera_name') THEN
           ALTER TABLE classrooms ADD COLUMN camera_name VARCHAR(255);
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='classrooms' AND column_name='camera_type') THEN
+          ALTER TABLE classrooms ADD COLUMN camera_type VARCHAR(50) NOT NULL DEFAULT 'webcam';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='classrooms' AND column_name='camera_quality') THEN
+          ALTER TABLE classrooms ADD COLUMN camera_quality VARCHAR(20) NOT NULL DEFAULT '720p';
         END IF;
 
         -- Drop old global unique constraint if it exists

@@ -66,9 +66,8 @@ export const registerTeacher = async (req, res) => {
       }
     }
 
-    if (!embedding || !Array.isArray(embedding)) {
-      throw new Error('AI Service failed to generate a valid face embedding.');
-    }
+    // Soft registration: allow registration even without valid embeddings
+    // The teacher will be flagged as is_face_verified = false
 
     // 2. Upload to Cloudinary
     const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
@@ -87,20 +86,24 @@ export const registerTeacher = async (req, res) => {
 
     // 3. Save to PostgreSQL
     const organization_id = req.user ? req.user.organization_id : null;
+    // Determine if the face is properly verified
+    const isFaceVerified = !!(embedding && Array.isArray(embedding) && embedding.length > 0);
+
     const result = await pool.query(
-      'INSERT INTO users (name, email, password, role, college_id, face_embedding, image_url, cloudinary_id, organization_id, angle_images, face_embeddings) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
+      'INSERT INTO users (name, email, password, role, college_id, face_embedding, image_url, cloudinary_id, organization_id, angle_images, face_embeddings, is_face_verified) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id',
       [
         name, 
         email, 
         hashedPassword, 
         'teacher', 
         college_id, 
-        JSON.stringify(embedding),
+        embedding ? JSON.stringify(embedding) : null,
         cloudinaryResponse.secure_url, 
         cloudinaryResponse.public_id,
         organization_id,
         JSON.stringify(angleImages),
-        embeddingsArray ? JSON.stringify(embeddingsArray) : null
+        embeddingsArray ? JSON.stringify(embeddingsArray) : null,
+        isFaceVerified
       ]
     );
     const teacherId = result.rows[0].id;
@@ -331,14 +334,13 @@ export const updateTeacher = async (req, res) => {
 
           embedding = aiResponse.data.embedding;
         } catch (aiErr) {
-          console.error('AI Service Error:', aiErr.message);
-          throw new Error(`AI Recognition Service is unreachable or timed out (${aiErr.message}). Please ensure the local AI service is running and healthy.`);
+          console.warn('AI Service Error during teacher update:', aiErr.message);
+          // Soft fail: don't throw, just leave embedding as null
         }
       }
 
-      if (!embedding || !Array.isArray(embedding)) {
-        throw new Error('AI Service failed to generate a valid face embedding.');
-      }
+      // Check verification status
+      const isFaceVerified = !!(embedding && Array.isArray(embedding) && embedding.length > 0);
 
       // 2. Upload new image to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
@@ -352,9 +354,14 @@ export const updateTeacher = async (req, res) => {
       }
 
       // 4. Update query with image and embedding info
-      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}`;
-      queryParams.push(JSON.stringify(embedding), cloudinaryResponse.secure_url, cloudinaryResponse.public_id);
-      paramIndex += 3;
+      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}, is_face_verified = $${paramIndex+3}`;
+      queryParams.push(
+        embedding ? JSON.stringify(embedding) : null,
+        cloudinaryResponse.secure_url, 
+        cloudinaryResponse.public_id,
+        isFaceVerified
+      );
+      paramIndex += 4;
       
       if (embeddingsArray) {
         updateQuery += `, face_embeddings = $${paramIndex}`;
