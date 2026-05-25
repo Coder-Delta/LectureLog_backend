@@ -187,8 +187,8 @@ export const getSchedules = async (req, res) => {
              'regular' as source_type
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
-      JOIN users u ON s.teacher_id = u.id
-      JOIN classrooms c ON s.classroom_id = c.id
+      LEFT JOIN users u ON s.teacher_id = u.id
+      LEFT JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id
         AND cc.cancel_date >= $1::date
         AND cc.cancel_date < ($1::date + interval '7 days')
