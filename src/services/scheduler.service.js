@@ -44,6 +44,8 @@ export const initScheduler = (app) => {
           -- Case 2: Started yesterday but ends today (crossover)
           (s.day_of_week = $4 AND s.end_time < s.start_time AND s.end_time > $2::time)
         )
+        AND s.valid_from <= (CASE WHEN s.day_of_week = $1 THEN $3::date ELSE $5::date END)
+        AND (s.valid_until IS NULL OR (CASE WHEN s.day_of_week = $1 THEN $3::date ELSE $5::date END) < s.valid_until)
         AND NOT EXISTS (
           SELECT 1 FROM timetable_week_entries t
           WHERE t.source_id = s.id 

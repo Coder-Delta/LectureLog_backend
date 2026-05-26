@@ -260,6 +260,12 @@ const initDb = async () => {
     `);
 
     await client.query(`
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS valid_from DATE NOT NULL DEFAULT '1970-01-01';
+      ALTER TABLE schedules ADD COLUMN IF NOT EXISTS valid_until DATE;
+      ALTER TABLE schedules ALTER COLUMN valid_from SET DEFAULT CURRENT_DATE;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS cancelled_classes (
         id SERIAL PRIMARY KEY,
         schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,

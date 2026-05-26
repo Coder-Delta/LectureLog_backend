@@ -68,11 +68,14 @@ const isFutureWeek = (weekStart) => {
 };
 
 export const createSchedule = async (req, res) => {
-  const { subject_id, classroom_id, day_of_week, start_time, end_time, teacher_id, year, camera_id, stream } = req.body;
+  const { subject_id, classroom_id, day_of_week, start_time, end_time, teacher_id, year, camera_id, stream, week_start } = req.body;
   const creator_id = req.user.id;
   const final_teacher_id = teacher_id || creator_id;
 
   try {
+    const targetWeekStart = getWeekStartDate(week_start);
+    const targetWeekStartStr = toDateOnly(targetWeekStart);
+
     console.log('[createSchedule] Checking collisions for:', { day_of_week, start_time, end_time, classroom_id, final_teacher_id });
     // 1. Check for collisions in Regular Schedules (classroom, teacher, OR same year+stream)
     const { rows: routineCollisions } = await pool.query(`
@@ -80,7 +83,8 @@ export const createSchedule = async (req, res) => {
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE s.day_of_week = $1 AND s.start_time::time < $7::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
-    `, [day_of_week, start_time, classroom_id, final_teacher_id, year || '1', stream || 'CSE', end_time]);
+      AND (s.valid_until IS NULL OR s.valid_until > $8::date)
+    `, [day_of_week, start_time, classroom_id, final_teacher_id, year || '1', stream || 'CSE', end_time, targetWeekStartStr]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -117,8 +121,8 @@ export const createSchedule = async (req, res) => {
     const org_id = req.user.organization_id;
 
     const result = await pool.query(
-      'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
-      [subject_id, classroom_id, final_teacher_id, day_of_week, start_time, end_time, year || '1', camera_id || '0', stream || 'CSE', org_id]
+      'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id, valid_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
+      [subject_id, classroom_id, final_teacher_id, day_of_week, start_time, end_time, year || '1', camera_id || '0', stream || 'CSE', org_id, targetWeekStartStr]
     );
     res.status(201).json({ message: 'Schedule created successfully', id: result.rows[0].id });
 
@@ -169,13 +173,15 @@ export const getSchedules = async (req, res) => {
           $2
         FROM schedules s
         JOIN classrooms c ON s.classroom_id = c.id
-        WHERE NOT EXISTS (
-          SELECT 1 FROM timetable_week_entries twe
-          WHERE twe.week_start = $1::date
-            AND twe.source_type = 'regular'
-            AND twe.source_id = s.id
-            AND twe.action = 'active'
-        )
+        WHERE s.valid_from <= $1::date
+          AND (s.valid_until IS NULL OR $1::date < s.valid_until)
+          AND NOT EXISTS (
+            SELECT 1 FROM timetable_week_entries twe
+            WHERE twe.week_start = $1::date
+              AND twe.source_type = 'regular'
+              AND twe.source_id = s.id
+              AND twe.action = 'active'
+          )
       `, [targetWeekStartStr, req.user?.id || null]);
     }
 
@@ -206,6 +212,9 @@ export const getSchedules = async (req, res) => {
       params.push(stream);
       conditions.push(`s.stream = $${params.length}`);
     }
+
+    conditions.push(`s.valid_from <= $1::date`);
+    conditions.push(`(s.valid_until IS NULL OR $1::date < s.valid_until)`);
 
     // Exclude schedules that have been marked as 'deleted' for this specific week's snapshot
     conditions.push(`NOT EXISTS (
@@ -269,6 +278,8 @@ export const getMySchedules = async (req, res) => {
       JOIN classrooms c ON s.classroom_id = c.id
       LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = CURRENT_DATE
       WHERE s.teacher_id = $1
+        AND s.valid_from <= CURRENT_DATE
+        AND (s.valid_until IS NULL OR CURRENT_DATE < s.valid_until)
     `, [teacher_id]);
     res.json(schedules);
   } catch (err) {
@@ -279,8 +290,11 @@ export const getMySchedules = async (req, res) => {
 export const updateSchedule = async (req, res) => {
   let { id } = req.params;
   if (String(id).startsWith('routine_')) id = id.replace('routine_', '');
-  const { subject_id, classroom_id, teacher_id, camera_id } = req.body;
+  const { subject_id, classroom_id, teacher_id, camera_id, week_start } = req.body;
   try {
+    const targetWeekStart = getWeekStartDate(week_start || req.query.week_start);
+    const targetWeekStartStr = toDateOnly(targetWeekStart);
+
     console.log('[updateSchedule] Checking collisions for ID:', id, { classroom_id, teacher_id });
     // 1. Get original schedule info to get day and time
     const { rows: original } = await pool.query('SELECT * FROM schedules WHERE id = $1', [id]);
@@ -295,7 +309,8 @@ export const updateSchedule = async (req, res) => {
       WHERE s.day_of_week = $1 AND s.start_time::time < $8::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
       AND s.id != $7
-    `, [day_of_week, start_time, classroom_id, teacher_id, original[0].year, original[0].stream, id, end_time]);
+      AND (s.valid_until IS NULL OR s.valid_until > $9::date)
+    `, [day_of_week, start_time, classroom_id, teacher_id, original[0].year, original[0].stream, id, end_time, targetWeekStartStr]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
@@ -329,10 +344,18 @@ export const updateSchedule = async (req, res) => {
       });
     }
 
+    // 1. Soft delete the old schedule starting from this week
     await pool.query(
-      'UPDATE schedules SET subject_id = $1, classroom_id = $2, teacher_id = $3, camera_id = $4 WHERE id = $5',
-      [subject_id, classroom_id, teacher_id, camera_id, id]
+      'UPDATE schedules SET valid_until = $1 WHERE id = $2',
+      [targetWeekStartStr, id]
     );
+
+    // 2. Insert the new schedule starting from this week
+    await pool.query(
+      'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id, valid_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      [subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, original[0].year, camera_id || '0', original[0].stream, original[0].organization_id, targetWeekStartStr]
+    );
+
     res.json({ message: 'Schedule updated' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -388,7 +411,12 @@ export const deleteSchedule = async (req, res) => {
         RETURNING id
       `, [id, schedule.subject_id, schedule.classroom_id, schedule.teacher_id]);
 
-      await pool.query('DELETE FROM schedules WHERE id = $1', [id]);
+      // Soft-delete the schedule from the routine starting next week
+      await pool.query(`
+        UPDATE schedules
+        SET valid_until = $1::date + interval '7 days'
+        WHERE id = $2
+      `, [targetWeekStartStr, id]);
 
       const io = req.app.get('io');
       if (io && cancelledSessions.length > 0) {

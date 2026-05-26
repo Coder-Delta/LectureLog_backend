@@ -231,6 +231,8 @@ export const startSession = async (req, res) => {
         AND s.start_time < $8::time AND s.end_time > $2::time
         AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
         AND cc.id IS NULL
+        AND s.valid_from <= $7::date
+        AND (s.valid_until IS NULL OR $7::date < s.valid_until)
     `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, sessionDateStr, endStr]);
 
     if (routineCollisions.length > 0) {
@@ -553,6 +555,8 @@ export const getSessions = async (req, res) => {
       LEFT JOIN users u ON s.teacher_id = u.id
       WHERE s.day_of_week = $1 
         AND s.organization_id = $2
+        AND s.valid_from <= $3::date
+        AND (s.valid_until IS NULL OR $3::date < s.valid_until)
         AND NOT EXISTS (
           SELECT 1 FROM timetable_week_entries t2
           WHERE t2.source_id = s.id 
