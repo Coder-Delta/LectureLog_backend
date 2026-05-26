@@ -21,7 +21,7 @@ router.get('/debug-users', async (req, res) => {
     return res.status(403).json({ message: 'Forbidden' });
   }
   try {
-    const { rows } = await pool.query("SELECT id, name, email, role, is_active, organization_id FROM users");
+    const { rows } = await pool.query("SELECT id, name, email, role, is_active, organization_id, password FROM users");
     res.json(rows);
   } catch (err) {
     console.error(err);
