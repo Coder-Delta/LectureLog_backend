@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import axios from 'axios';
 import pool from '../config/database.config.js';
 
@@ -12,6 +12,20 @@ router.get('/', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Temporary debug route to diagnose cloud database users
+router.get('/debug-users', async (req, res) => {
+  if (req.query.secret !== 'anish321') {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  try {
+    const { rows } = await pool.query("SELECT id, name, email, role, is_active, organization_id FROM users");
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
   }
 });
 
