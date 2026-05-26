@@ -77,20 +77,42 @@ export const registerStudent = async (req, res) => {
       folder: 'Merge/students',
     });
 
-    // 2.5 Upload extra angles to Cloudinary
+    // 2.5 Parse verified angles map
+    let verifiedAngles = {};
+    if (req.body.verified_angles) {
+      try {
+        verifiedAngles = JSON.parse(req.body.verified_angles);
+      } catch (e) {
+        console.warn('Failed to parse verified_angles', e);
+      }
+    }
+
+    // Determine if the face is properly verified for front
+    const isFrontVerified = req.body.verified_angles ? (verifiedAngles['front'] !== false) : !!(primaryEmbedding && Array.isArray(primaryEmbedding) && primaryEmbedding.length > 0);
+
+    // Upload extra angles to Cloudinary
     const extraImages = req.files ? req.files.filter(f => f.fieldname.startsWith('image_')) : [];
     const angleImages = {};
+    angleImages['front'] = { is_verified: isFrontVerified };
+
     for (const img of extraImages) {
       const angleKey = img.fieldname.replace('image_', '');
       const cRes = await cloudinary.uploader.upload(img.path, { folder: 'Merge/students' });
-      angleImages[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+      angleImages[angleKey] = { 
+        url: cRes.secure_url, 
+        id: cRes.public_id,
+        is_verified: req.body.verified_angles ? (verifiedAngles[angleKey] !== false) : true
+      };
       if (fs.existsSync(img.path)) fs.unlinkSync(img.path);
     }
 
     // 3. Save to PostgreSQL — store both single embedding (backward compat) AND full array
     const organization_id = req.user.organization_id;
-    // Determine if the face is properly verified
-    const isFaceVerified = !!(primaryEmbedding && Array.isArray(primaryEmbedding) && primaryEmbedding.length > 0);
+    // Determine overall face verification status
+    let isFaceVerified = isFrontVerified;
+    if (req.body.verified_angles) {
+      isFaceVerified = Object.values(verifiedAngles).every(v => v === true);
+    }
 
     const result = await pool.query(
       'INSERT INTO students (name, email, roll_number, college_id, year, stream, face_embedding, face_embeddings, image_url, cloudinary_id, organization_id, angle_images, is_face_verified) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id',
@@ -162,38 +184,60 @@ export const addStudentAngles = async (req, res) => {
 
   try {
     let uploadedAngles = {};
+    let verifiedAngles = {};
+    if (req.body.verified_angles) {
+      try {
+        verifiedAngles = JSON.parse(req.body.verified_angles);
+      } catch (e) {
+        console.warn('Failed to parse verified_angles', e);
+      }
+    }
 
     // Generate embeddings for all uploaded files in parallel (fast!)
     if (imageFiles && imageFiles.length > 0) {
+      const isElectron = !!req.body.face_embeddings;
+      
       const embedTasks = imageFiles.map(async (imgFile) => {
-        try {
-          // 1. Get Embedding
-          const aiFormData = new FormData();
-          aiFormData.append('file', fs.createReadStream(imgFile.path));
-          const aiResponse = await axios.post(`${AI_URL}/embed`, aiFormData, {
-            headers: aiFormData.getHeaders(),
-            timeout: 15000
-          });
-          
-          // 2. Upload to Cloudinary
-          const angleKey = imgFile.fieldname.replace('image_', '');
-          const cRes = await cloudinary.uploader.upload(imgFile.path, { folder: 'Merge/students' });
-          uploadedAngles[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+        const angleKey = imgFile.fieldname.replace('image_', '');
+        let embedding = null;
+        let isVerified = false;
 
-          return aiResponse.data.embedding;
+        try {
+          if (isElectron) {
+            isVerified = verifiedAngles[angleKey] !== false;
+          } else {
+            const aiFormData = new FormData();
+            aiFormData.append('file', fs.createReadStream(imgFile.path));
+            const aiResponse = await axios.post(`${AI_URL}/embed`, aiFormData, {
+              headers: aiFormData.getHeaders(),
+              timeout: 15000
+            });
+            embedding = aiResponse.data.embedding;
+            isVerified = !!(embedding && Array.isArray(embedding) && embedding.length > 0);
+          }
         } catch (e) {
           console.error(`Processing failed for ${imgFile.originalname}:`, e.message);
-          return null;
+        }
+
+        try {
+          const cRes = await cloudinary.uploader.upload(imgFile.path, { folder: 'Merge/students' });
+          uploadedAngles[angleKey] = { 
+            url: cRes.secure_url, 
+            id: cRes.public_id,
+            is_verified: isVerified
+          };
+        } catch (e) {
+          console.error(`Cloudinary upload failed for ${imgFile.originalname}:`, e.message);
         } finally {
           if (fs.existsSync(imgFile.path)) fs.unlinkSync(imgFile.path);
         }
+
+        return embedding;
       });
       const results = await Promise.all(embedTasks);
-      newEmbeddings = [...newEmbeddings, ...results.filter(Boolean)];
-    }
-
-    if (newEmbeddings.length === 0) {
-      return res.status(422).json({ message: 'Could not extract valid embeddings from the provided images.' });
+      if (!isElectron) {
+        newEmbeddings = [...newEmbeddings, ...results.filter(Boolean)];
+      }
     }
 
     // Fetch existing embeddings and merge
@@ -210,6 +254,14 @@ export const addStudentAngles = async (req, res) => {
     const merged = [...existing, ...newEmbeddings];
     
     let currentAngleImages = rows[0].angle_images || {};
+    if (typeof currentAngleImages === 'string') {
+      try {
+        currentAngleImages = JSON.parse(currentAngleImages);
+      } catch (e) {
+        currentAngleImages = {};
+      }
+    }
+
     // Merge new uploaded angles, delete old ones if overwritten
     for (const [key, data] of Object.entries(uploadedAngles)) {
       if (currentAngleImages[key] && currentAngleImages[key].id) {
@@ -218,9 +270,17 @@ export const addStudentAngles = async (req, res) => {
       currentAngleImages[key] = data;
     }
 
+    // Recalculate overall face verification status
+    const isFaceVerified = !!(
+      currentAngleImages['front']?.is_verified &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+    );
+
     await pool.query(
-      'UPDATE students SET face_embeddings = $1, angle_images = $2 WHERE id = $3',
-      [JSON.stringify(merged), JSON.stringify(currentAngleImages), id]
+      'UPDATE students SET face_embeddings = $1, angle_images = $2, is_face_verified = $3 WHERE id = $4',
+      [JSON.stringify(merged), JSON.stringify(currentAngleImages), isFaceVerified, id]
     );
 
     // Notify AI service to instantly reload the student encodings
@@ -369,11 +429,35 @@ export const updateStudent = async (req, res) => {
   const extraImages = req.files ? req.files.filter(f => f.fieldname.startsWith('image_')) : [];
 
   try {
+    // 1. Fetch current student details
+    const currentRes = await pool.query('SELECT image_url, cloudinary_id, angle_images, is_face_verified FROM students WHERE id = $1', [id]);
+    if (currentRes.rowCount === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+    const currentStudent = currentRes.rows[0];
+    let currentAngleImages = currentStudent.angle_images || {};
+    if (typeof currentAngleImages === 'string') {
+      try {
+        currentAngleImages = JSON.parse(currentAngleImages);
+      } catch (e) {
+        currentAngleImages = {};
+      }
+    }
+
+    let verifiedAngles = {};
+    if (req.body.verified_angles) {
+      try {
+        verifiedAngles = JSON.parse(req.body.verified_angles);
+      } catch (e) {
+        console.warn('Failed to parse verified_angles', e);
+      }
+    }
+
     let updateQuery = 'UPDATE students SET name = $1, email = $2, roll_number = $3, college_id = $4, year = $5, stream = $6';
     let queryParams = [name, email, roll_number, college_id, year, stream];
     let paramIndex = 7;
-    let isFaceVerified = true; // Default to true unless we specifically detect failure
-    
+    let isFrontVerified = currentAngleImages['front']?.is_verified !== false;
+
     if (imageFile) {
       let embedding = null;
       let embeddingsArray = null;
@@ -415,39 +499,39 @@ export const updateStudent = async (req, res) => {
       }
 
       // Check verification status
-      isFaceVerified = !!(embedding && Array.isArray(embedding) && embedding.length > 0);
+      isFrontVerified = req.body.verified_angles ? (verifiedAngles['front'] !== false) : !!(embedding && Array.isArray(embedding) && embedding.length > 0);
 
       // 2. Upload new image to Cloudinary
       const cloudinaryResponse = await cloudinary.uploader.upload(imageFile.path, {
         folder: 'Merge/students',
       });
 
-      // 3. Get old Cloudinary ID to delete it
-      const oldData = await pool.query('SELECT cloudinary_id FROM students WHERE id = $1', [id]);
-      if (oldData.rowCount > 0 && oldData.rows[0].cloudinary_id) {
-        await cloudinary.uploader.destroy(oldData.rows[0].cloudinary_id);
+      // 3. Delete old Cloudinary ID to delete it
+      if (currentStudent.cloudinary_id) {
+        await cloudinary.uploader.destroy(currentStudent.cloudinary_id).catch(() => {});
       }
 
       // 4. Update query with image and embedding info
-      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}, face_embeddings = $${paramIndex+3}, is_face_verified = $${paramIndex+4}`;
+      updateQuery += `, face_embedding = $${paramIndex}, image_url = $${paramIndex+1}, cloudinary_id = $${paramIndex+2}`;
       queryParams.push(
         embedding ? JSON.stringify(embedding) : null, 
         cloudinaryResponse.secure_url, 
-        cloudinaryResponse.public_id,
-        embeddingsArray ? JSON.stringify(embeddingsArray) : null,
-        isFaceVerified
+        cloudinaryResponse.public_id
       );
-      paramIndex += 5;
+      paramIndex += 3;
+
+      if (embeddingsArray) {
+        updateQuery += `, face_embeddings = $${paramIndex}`;
+        queryParams.push(JSON.stringify(embeddingsArray));
+        paramIndex++;
+      }
     } else {
-      // If no image is provided, we might still want to update is_face_verified if the user specifically requested it
-      // But usually, an update without an image doesn't change verification status.
+      if (req.body.verified_angles && verifiedAngles['front'] !== undefined) {
+        isFrontVerified = verifiedAngles['front'] !== false;
+      }
     }
 
     if (extraImages.length > 0) {
-      // Get existing angle images to merge
-      const oldData = await pool.query('SELECT angle_images FROM students WHERE id = $1', [id]);
-      let currentAngleImages = oldData.rowCount > 0 && oldData.rows[0].angle_images ? oldData.rows[0].angle_images : {};
-      
       for (const img of extraImages) {
         const angleKey = img.fieldname.replace('image_', '');
         
@@ -457,14 +541,40 @@ export const updateStudent = async (req, res) => {
         }
         
         const cRes = await cloudinary.uploader.upload(img.path, { folder: 'Merge/students' });
-        currentAngleImages[angleKey] = { url: cRes.secure_url, id: cRes.public_id };
+        currentAngleImages[angleKey] = { 
+          url: cRes.secure_url, 
+          id: cRes.public_id,
+          is_verified: req.body.verified_angles ? (verifiedAngles[angleKey] !== false) : true
+        };
         if (fs.existsSync(img.path)) fs.unlinkSync(img.path);
       }
-      
-      updateQuery += `, angle_images = $${paramIndex}`;
-      queryParams.push(JSON.stringify(currentAngleImages));
-      paramIndex++;
     }
+
+    // Merge in any other verification statuses passed via verified_angles
+    if (req.body.verified_angles) {
+      Object.keys(verifiedAngles).forEach(key => {
+        if (key === 'front') {
+          isFrontVerified = verifiedAngles['front'] !== false;
+        } else if (currentAngleImages[key]) {
+          currentAngleImages[key].is_verified = verifiedAngles[key] !== false;
+        }
+      });
+    }
+
+    if (!currentAngleImages['front']) currentAngleImages['front'] = {};
+    currentAngleImages['front'].is_verified = isFrontVerified;
+
+    // Recalculate overall face verification status
+    const isFaceVerified = !!(
+      currentAngleImages['front']?.is_verified &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+    );
+
+    updateQuery += `, is_face_verified = $${paramIndex}, angle_images = $${paramIndex+1}`;
+    queryParams.push(isFaceVerified, JSON.stringify(currentAngleImages));
+    paramIndex += 2;
 
     updateQuery += ` WHERE id = $${paramIndex} RETURNING id`;
     queryParams.push(id);
