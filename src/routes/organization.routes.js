@@ -15,38 +15,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Temporary debug route to diagnose cloud database users
-router.get('/debug-users', async (req, res) => {
-  if (req.query.secret !== 'anish321') {
-    return res.status(403).json({ message: 'Forbidden' });
-  }
-  try {
-    const { rows } = await pool.query("SELECT id, name, email, role, is_active, organization_id, password FROM users");
-    res.json(rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Temporary password reset route to recover admin login access
-router.post('/reset-admin-password', async (req, res) => {
-  if (req.query.secret !== 'anish321') {
-    return res.status(403).json({ message: 'Forbidden' });
-  }
-  try {
-    // bcrypt hash of '12345678'
-    const targetHash = '$2b$10$GGB8sDUBmwo8mY0YvLc6.ukyQvAPlvxKB7G7VKxf9C2LO6LJ41xoS';
-    const result = await pool.query(
-      "UPDATE users SET password = $1 WHERE email = 'anish130905@gmail.com' AND role = 'admin' RETURNING id, email, role",
-      [targetHash]
-    );
-    res.json({ success: true, message: 'Password reset successful!', updatedUser: result.rows[0] });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 router.get('/master-list', async (req, res) => {
   let { name, country } = req.query;
