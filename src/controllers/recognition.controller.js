@@ -1,4 +1,6 @@
 import pool from '../config/database.config.js';
+import { getLatestAIStatus } from '../services/ai.service.js';
+
 
 export const processRecognition = async (req, res) => {
   const { student_id, session_id, confidence } = req.body;
@@ -81,3 +83,13 @@ export const getSessionAttendance = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+export const getRecognitionStatus = async (req, res) => {
+  try {
+    const status = getLatestAIStatus();
+    res.json(status || { online: false, displayStatus: 'AI Service Offline', isError: true, details: {} });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+

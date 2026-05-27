@@ -349,6 +349,12 @@ const initDb = async () => {
       )
     `);
 
+    await client.query(`
+      ALTER TABLE time_slots ADD COLUMN IF NOT EXISTS valid_from DATE NOT NULL DEFAULT '1970-01-01';
+      ALTER TABLE time_slots ADD COLUMN IF NOT EXISTS valid_until DATE;
+      ALTER TABLE time_slots ALTER COLUMN valid_from SET DEFAULT CURRENT_DATE;
+    `);
+
     // Check if time_slots has values, otherwise insert defaults
     const slotCountRes = await client.query('SELECT COUNT(*) FROM time_slots');
     if (parseInt(slotCountRes.rows[0].count) === 0) {
