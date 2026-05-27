@@ -267,10 +267,10 @@ export const addTeacherAngles = async (req, res) => {
 
     // Recalculate overall face verification status
     const isFaceVerified = !!(
-      currentAngleImages['front']?.is_verified &&
-      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
-      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
-      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+      currentAngleImages['front']?.is_verified !== false &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified !== false &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified !== false &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified !== false)
     );
 
     await pool.query(
@@ -292,7 +292,7 @@ export const addTeacherAngles = async (req, res) => {
 export const getTeachers = async (req, res) => {
   try {
     const { rows: teachers } = await pool.query(
-      `SELECT id, name, email, college_id, image_url, created_at, face_embedding, face_embeddings, angle_images
+      `SELECT id, name, email, college_id, image_url, created_at, face_embedding, face_embeddings, angle_images, is_face_verified
         FROM users WHERE role = 'teacher' ORDER BY created_at DESC`
     );
     const processedTeachers = teachers.map(t => {
@@ -497,10 +497,10 @@ export const updateTeacher = async (req, res) => {
 
     // Recalculate overall face verification status
     const isFaceVerified = !!(
-      currentAngleImages['front']?.is_verified &&
-      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
-      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
-      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+      currentAngleImages['front']?.is_verified !== false &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified !== false &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified !== false &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified !== false)
     );
 
     updateQuery += `, is_face_verified = $${paramIndex}, angle_images = $${paramIndex+1}`;

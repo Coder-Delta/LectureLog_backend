@@ -272,10 +272,10 @@ export const addStudentAngles = async (req, res) => {
 
     // Recalculate overall face verification status
     const isFaceVerified = !!(
-      currentAngleImages['front']?.is_verified &&
-      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
-      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
-      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+      currentAngleImages['front']?.is_verified !== false &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified !== false &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified !== false &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified !== false)
     );
 
     await pool.query(
@@ -566,10 +566,10 @@ export const updateStudent = async (req, res) => {
 
     // Recalculate overall face verification status
     const isFaceVerified = !!(
-      currentAngleImages['front']?.is_verified &&
-      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified &&
-      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified &&
-      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified)
+      currentAngleImages['front']?.is_verified !== false &&
+      currentAngleImages['left']?.url && currentAngleImages['left']?.is_verified !== false &&
+      currentAngleImages['right']?.url && currentAngleImages['right']?.is_verified !== false &&
+      (!currentAngleImages['down']?.url || currentAngleImages['down']?.is_verified !== false)
     );
 
     updateQuery += `, is_face_verified = $${paramIndex}, angle_images = $${paramIndex+1}`;

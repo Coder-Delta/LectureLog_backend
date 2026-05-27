@@ -173,8 +173,20 @@ export const startSession = async (req, res) => {
   const teacher_id = req.body.teacher_id || req.user?.id;
 
   try {
-    const start_time = req.body.start_time ? new Date(req.body.start_time) : new Date();
-    const end_time = req.body.end_time ? new Date(req.body.end_time) : new Date(start_time.getTime() + (duration || 50) * 60000);
+    if (!req.body.start_time || !req.body.end_time) {
+      return res.status(400).json({
+        message: 'Start time and end time are required to schedule a custom session.'
+      });
+    }
+
+    const start_time = new Date(req.body.start_time);
+    const end_time = new Date(req.body.end_time);
+
+    if (isNaN(start_time.getTime()) || isNaN(end_time.getTime())) {
+      return res.status(400).json({
+        message: 'Invalid start time or end time format provided.'
+      });
+    }
     
     // Day of the week and dates in IST
     const startIST = getISTParts(start_time);
