@@ -213,7 +213,7 @@ export const getSchedules = async (req, res) => {
       conditions.push(`s.stream = $${params.length}`);
     }
 
-    conditions.push(`s.valid_from <= $1::date`);
+    conditions.push(`s.valid_from <= $1::date + interval '6 days'`);
     conditions.push(`(s.valid_until IS NULL OR $1::date < s.valid_until)`);
 
     // Exclude schedules that have been marked as 'deleted' for this specific week's snapshot

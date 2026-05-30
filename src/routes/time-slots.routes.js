@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
     const targetDate = week_start ? week_start : new Date().toISOString().split('T')[0];
     const result = await pool.query(
       `SELECT * FROM time_slots 
-       WHERE valid_from <= $1::date 
+       WHERE valid_from <= $1::date + interval '6 days'
          AND (valid_until IS NULL OR $1::date < valid_until) 
        ORDER BY id ASC`,
       [targetDate]
@@ -115,6 +115,74 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
 
     res.status(200).json({ success: true, message: 'Time slot deleted successfully and associated schedules deactivated' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// PUT (update) a time slot by ID
+router.put('/:id', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const { start_time, end_time, raw_start, raw_end, week_start } = req.body;
+  try {
+    const targetDate = week_start ? week_start : new Date().toISOString().split('T')[0];
+    
+    // 1. Get the original time slot
+    const { rows: slotRows } = await pool.query('SELECT * FROM time_slots WHERE id = $1', [id]);
+    if (slotRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Time slot not found' });
+    }
+    const oldSlot = slotRows[0];
+    
+    // 2. Soft-delete the old time slot starting from targetDate
+    await pool.query(
+      'UPDATE time_slots SET valid_until = $1 WHERE id = $2',
+      [targetDate, id]
+    );
+
+    // 3. Create the new time slot starting from targetDate
+    const newSlotRes = await pool.query(
+      'INSERT INTO time_slots (start_time, end_time, raw_start, raw_end, valid_from) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [start_time, end_time, raw_start, raw_end, targetDate]
+    );
+    const newSlot = newSlotRes.rows[0];
+
+    // 4. Update all schedules in this slot starting from targetDate to use the new times
+    const oldRawStartHM = oldSlot.raw_start.substring(0, 5);
+    const { rows: activeSchedules } = await pool.query(
+      `SELECT * FROM schedules 
+       WHERE start_time::text LIKE $1 
+         AND (valid_until IS NULL OR valid_until > $2::date)`,
+      [`${oldRawStartHM}%`, targetDate]
+    );
+
+    for (const schedule of activeSchedules) {
+      // Soft-delete the old schedule starting from targetDate
+      await pool.query(
+        'UPDATE schedules SET valid_until = $1 WHERE id = $2',
+        [targetDate, schedule.id]
+      );
+
+      // Insert new schedule with new start/end times and valid_from = targetDate
+      await pool.query(
+        'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id, valid_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+        [
+          schedule.subject_id,
+          schedule.classroom_id,
+          schedule.teacher_id,
+          schedule.day_of_week,
+          raw_start,
+          raw_end,
+          schedule.year,
+          schedule.camera_id,
+          schedule.stream,
+          schedule.organization_id,
+          targetDate
+        ]
+      );
+    }
+
+    res.status(200).json({ success: true, message: 'Time slot updated successfully', slot: newSlot });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
