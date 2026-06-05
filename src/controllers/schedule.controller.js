@@ -111,7 +111,7 @@ export const createSchedule = async (req, res) => {
       AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
-    `, [classroom_id, final_teacher_id, year || '1', stream || 'CSE', day_of_week, start_time, end_time]);
+    `, [classroom_id, final_teacher_id, parseInt(year || '1', 10), stream || 'CSE', day_of_week, start_time, end_time]);
 
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
@@ -343,7 +343,7 @@ export const updateSchedule = async (req, res) => {
       AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
-    `, [classroom_id, teacher_id, original[0].year, original[0].stream, day_of_week, start_time, end_time]);
+    `, [classroom_id, teacher_id, parseInt(original[0].year, 10), original[0].stream, day_of_week, start_time, end_time]);
 
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];

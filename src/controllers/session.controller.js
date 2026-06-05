@@ -216,7 +216,7 @@ export const startSession = async (req, res) => {
         AND s.start_time < ($5::timestamptz - interval '1 second')
         AND s.end_time > ($6::timestamptz + interval '1 second')
         AND s.status IN ('active', 'scheduled')
-    `, [classroom_id, teacher_id, year, stream, end_time, start_time]);
+    `, [classroom_id, teacher_id, year ? parseInt(year, 10) : null, stream, end_time, start_time]);
 
     if (overlappingSessions.length > 0) {
       const collision = overlappingSessions[0];
@@ -560,7 +560,7 @@ export const getSessions = async (req, res) => {
      `;
     
 
-    if (year) { sessionParams.push(year); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
+    if (year) { sessionParams.push(parseInt(year, 10)); sessionQuery += ` AND s.year = $${sessionParams.length}`; }
     if (stream) { sessionParams.push(stream); sessionQuery += ` AND s.stream = $${sessionParams.length}`; }
 
     const { rows: dbSessions } = await pool.query(sessionQuery, sessionParams);
