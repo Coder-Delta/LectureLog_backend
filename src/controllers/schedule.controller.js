@@ -83,7 +83,13 @@ export const createSchedule = async (req, res) => {
       JOIN subjects sub ON s.subject_id = sub.id
       WHERE s.day_of_week = $1 AND s.start_time::time < $7::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
-      AND (s.valid_until IS NULL OR s.valid_until > $8::date)
+      AND (s.valid_until IS NULL OR (s.valid_until > $8::date AND NOT EXISTS (
+        SELECT 1 FROM timetable_week_entries twe 
+        WHERE twe.week_start = $8::date 
+          AND twe.source_type = 'regular' 
+          AND twe.source_id = s.id 
+          AND twe.action = 'deleted'
+      )))
     `, [day_of_week, start_time, classroom_id, final_teacher_id, year || '1', stream || 'CSE', end_time, targetWeekStartStr]);
 
     if (routineCollisions.length > 0) {
@@ -309,7 +315,13 @@ export const updateSchedule = async (req, res) => {
       WHERE s.day_of_week = $1 AND s.start_time::time < $8::time AND s.end_time::time > $2::time
       AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
       AND s.id != $7
-      AND (s.valid_until IS NULL OR s.valid_until > $9::date)
+      AND (s.valid_until IS NULL OR (s.valid_until > $9::date AND NOT EXISTS (
+        SELECT 1 FROM timetable_week_entries twe 
+        WHERE twe.week_start = $9::date 
+          AND twe.source_type = 'regular' 
+          AND twe.source_id = s.id 
+          AND twe.action = 'deleted'
+      )))
     `, [day_of_week, start_time, classroom_id, teacher_id, original[0].year, original[0].stream, id, end_time, targetWeekStartStr]);
 
     if (routineCollisions.length > 0) {

@@ -245,6 +245,13 @@ export const startSession = async (req, res) => {
         AND cc.id IS NULL
         AND s.valid_from <= $7::date
         AND (s.valid_until IS NULL OR $7::date < s.valid_until)
+        AND NOT EXISTS (
+          SELECT 1 FROM timetable_week_entries twe
+          WHERE twe.source_id = s.id
+            AND twe.source_type = 'regular'
+            AND twe.entry_date = $7::date
+            AND twe.action IN ('cancelled', 'deleted')
+        )
     `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, sessionDateStr, endStr]);
 
     if (routineCollisions.length > 0) {
