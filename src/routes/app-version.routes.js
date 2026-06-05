@@ -15,10 +15,15 @@ const mobilePackagePath = path.resolve(__dirname, "../../../Merge_mobile/package
 function getMobilePackageVersion() {
   try {
     const mobilePackage = JSON.parse(fs.readFileSync(mobilePackagePath, "utf-8"));
-    return mobilePackage.version || "1.0.0";
+    return (
+      mobilePackage.version ||
+      process.env.MOBILE_LATEST_VERSION ||
+      process.env.MOBILE_MIN_REQUIRED_VERSION ||
+      "1.0.2"
+    );
   } catch (error) {
     console.warn("[APP_VERSION] Could not read mobile package.json:", error.message);
-    return "1.0.0";
+    return process.env.MOBILE_LATEST_VERSION || process.env.MOBILE_MIN_REQUIRED_VERSION || "1.0.2";
   }
 }
 
