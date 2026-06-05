@@ -1,10 +1,26 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const router = express.Router();
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const MOBILE_RELEASE_API =
   process.env.MOBILE_RELEASE_API ||
   "https://api.github.com/repos/mahammadanish321/lectureLog_mobile/releases/latest";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const mobilePackagePath = path.resolve(__dirname, "../../../Merge_mobile/package.json");
+
+function getMobilePackageVersion() {
+  try {
+    const mobilePackage = JSON.parse(fs.readFileSync(mobilePackagePath, "utf-8"));
+    return mobilePackage.version || "1.0.0";
+  } catch (error) {
+    console.warn("[APP_VERSION] Could not read mobile package.json:", error.message);
+    return "1.0.0";
+  }
+}
 
 let cachedMobileRelease = null;
 let cachedAt = 0;
@@ -41,8 +57,9 @@ async function getLatestMobileRelease() {
 }
 
 router.get("/", async (_req, res) => {
+  const mobilePackageVersion = getMobilePackageVersion();
   let latestRelease = {
-    version: process.env.MOBILE_LATEST_VERSION || process.env.MOBILE_MIN_REQUIRED_VERSION || "1.0.0",
+    version: mobilePackageVersion,
     updateUrl: process.env.MOBILE_UPDATE_URL || null,
   };
 
@@ -52,7 +69,7 @@ router.get("/", async (_req, res) => {
     console.warn("[APP_VERSION] Could not load latest mobile release:", error.message);
   }
 
-  const latestVersion = process.env.MOBILE_LATEST_VERSION || latestRelease.version;
+  const latestVersion = process.env.MOBILE_LATEST_VERSION || mobilePackageVersion;
   const minRequiredVersion = process.env.MOBILE_MIN_REQUIRED_VERSION || latestVersion;
 
   res.status(200).json({
