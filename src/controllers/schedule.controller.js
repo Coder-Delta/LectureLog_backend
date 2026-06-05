@@ -148,7 +148,7 @@ export const getSchedules = async (req, res) => {
         INSERT INTO timetable_week_entries (
           week_start, entry_date, source_type, source_id, action,
           subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-          year, stream, camera_id, camera_name, created_by
+          year, stream, camera_id, camera_name, created_by, organization_id
         )
         SELECT
           $1::date,
@@ -176,11 +176,13 @@ export const getSchedules = async (req, res) => {
           s.stream,
           s.camera_id,
           c.camera_name,
-          $2
+          $2,
+          s.organization_id
         FROM schedules s
         JOIN classrooms c ON s.classroom_id = c.id
         WHERE s.valid_from <= $1::date
           AND (s.valid_until IS NULL OR $1::date < s.valid_until)
+          AND s.organization_id = $3
           AND NOT EXISTS (
             SELECT 1 FROM timetable_week_entries twe
             WHERE twe.week_start = $1::date
@@ -188,7 +190,7 @@ export const getSchedules = async (req, res) => {
               AND twe.source_id = s.id
               AND twe.action = 'active'
           )
-      `, [targetWeekStartStr, req.user?.id || null]);
+      `, [targetWeekStartStr, req.user?.id || null, req.user?.organization_id || null]);
     }
 
     let query = `
@@ -217,6 +219,12 @@ export const getSchedules = async (req, res) => {
     if (stream) {
       params.push(stream);
       conditions.push(`s.stream = $${params.length}`);
+    }
+
+    const orgId = req.user?.organization_id;
+    if (orgId) {
+      params.push(orgId);
+      conditions.push(`s.organization_id = $${params.length}`);
     }
 
     conditions.push(`s.valid_from <= $1::date + interval '6 days'`);
@@ -264,6 +272,10 @@ export const getSchedules = async (req, res) => {
     if (stream) {
       historyParams.push(stream);
       historyQuery += ` AND twe.stream = $${historyParams.length}`;
+    }
+    if (orgId) {
+      historyParams.push(orgId);
+      historyQuery += ` AND twe.organization_id = $${historyParams.length}`;
     }
 
     const { rows: historyRows } = await pool.query(historyQuery, historyParams);
@@ -392,9 +404,9 @@ export const deleteSchedule = async (req, res) => {
       INSERT INTO timetable_week_entries (
         week_start, entry_date, source_type, source_id, action,
         subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-        year, stream, camera_id, camera_name, created_by
+        year, stream, camera_id, camera_name, created_by, organization_id
       )
-      VALUES ($1, $2, 'regular', $3, 'deleted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES ($1, $2, 'regular', $3, 'deleted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     `, [
       targetWeekStartStr,
       toDateOnly(getDateForDay(targetWeekStart, schedule.day_of_week)),
@@ -410,6 +422,7 @@ export const deleteSchedule = async (req, res) => {
       schedule.camera_id,
       schedule.camera_name,
       req.user?.id || null,
+      schedule.organization_id,
     ]);
 
     if (userRole === 'admin') {
@@ -475,9 +488,9 @@ export const cancelSchedule = async (req, res) => {
       INSERT INTO timetable_week_entries (
         week_start, entry_date, source_type, source_id, action,
         subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time,
-        year, stream, camera_id, camera_name, created_by
+        year, stream, camera_id, camera_name, created_by, organization_id
       )
-      SELECT $1, $2, 'regular', $3, 'cancelled', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+      SELECT $1, $2, 'regular', $3, 'cancelled', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
       WHERE NOT EXISTS (
         SELECT 1 FROM timetable_week_entries
         WHERE week_start = $1::date
@@ -501,6 +514,7 @@ export const cancelSchedule = async (req, res) => {
       schedule.camera_id,
       schedule.camera_name,
       teacher_id,
+      schedule.organization_id,
     ]);
 
     // If it's today, stop the active session by marking it cancelled
