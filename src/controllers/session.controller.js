@@ -63,11 +63,22 @@ export const finalizeSession = async (sessionId, io = null) => {
     if (sessions.length === 0) return;
     const session = sessions[0];
 
-    const { rows: classrooms } = await pool.query(
-      "SELECT organization_id FROM classrooms WHERE id = $1",
-      [session.classroom_id]
+    // Get orgId from session_classrooms junction (multi-classroom support)
+    const { rows: sessionClassrooms } = await pool.query(
+      `SELECT c.organization_id FROM session_classrooms sc
+       JOIN classrooms c ON sc.classroom_id = c.id
+       WHERE sc.session_id = $1 LIMIT 1`,
+      [sessionId]
     );
-    const orgId = classrooms[0]?.organization_id;
+    // Fallback to legacy classroom_id if no junction rows exist
+    let orgId = sessionClassrooms[0]?.organization_id;
+    if (!orgId && session.classroom_id) {
+      const { rows: fallbackClassrooms } = await pool.query(
+        "SELECT organization_id FROM classrooms WHERE id = $1",
+        [session.classroom_id]
+      );
+      orgId = fallbackClassrooms[0]?.organization_id;
+    }
     
     // 2. Identify students who should have been present (Roster)
     if (session.year && session.stream) {
@@ -286,6 +297,14 @@ export const startSession = async (req, res) => {
       [subject_id, classroom_id, teacher_id, start_time, end_time, status, year || null, stream || null, true]
     );
     const sessionId = result.rows[0].id;
+
+    // Insert into session_classrooms junction table
+    if (classroom_id) {
+      await pool.query(
+        'INSERT INTO session_classrooms (session_id, classroom_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [sessionId, classroom_id]
+      );
+    }
 
     // Fetch names for the broadcast
     const { rows: meta } = await pool.query(`
@@ -585,6 +604,46 @@ export const getSessions = async (req, res) => {
 
     const { rows: dbSessions } = await pool.query(sessionQuery, sessionParams);
 
+    // ── Enrich DB sessions with multi-classroom + camera data ──
+    for (const sess of dbSessions) {
+      const { rows: scRows } = await pool.query(`
+        SELECT c.id, c.name, c.camera_url, c.camera_name, c.camera_type, c.camera_quality
+        FROM session_classrooms sc
+        JOIN classrooms c ON sc.classroom_id = c.id
+        WHERE sc.session_id = $1
+      `, [sess.id]);
+      // Fetch cameras for each classroom
+      const classroomsWithCameras = [];
+      for (const cr of scRows) {
+        const { rows: cams } = await pool.query(`
+          SELECT id, camera_url, camera_name, camera_type, camera_quality
+          FROM cameras WHERE classroom_id = $1
+        `, [cr.id]);
+        classroomsWithCameras.push({ ...cr, cameras: cams });
+      }
+      // Fallback: if no junction rows, use legacy classroom_id
+      if (classroomsWithCameras.length === 0 && sess.classroom_id) {
+        const { rows: cams } = await pool.query(`
+          SELECT id, camera_url, camera_name, camera_type, camera_quality
+          FROM cameras WHERE classroom_id = $1
+        `, [sess.classroom_id]);
+        classroomsWithCameras.push({
+          id: sess.classroom_id,
+          name: sess.classroom_name,
+          camera_url: sess.camera_url,
+          camera_name: sess.camera_name,
+          camera_type: sess.camera_type,
+          camera_quality: sess.camera_quality,
+          cameras: cams.length > 0 ? cams : [{ camera_url: sess.camera_url, camera_name: sess.camera_name, camera_type: sess.camera_type, camera_quality: sess.camera_quality }]
+        });
+      }
+      sess.classrooms = classroomsWithCameras;
+      // Update classroom_name to aggregated names for backwards compat
+      if (classroomsWithCameras.length > 1) {
+        sess.classroom_name = classroomsWithCameras.map(c => c.name).join(', ');
+      }
+    }
+
     // ── STEP 2: Fetch Today's Routine (virtual sessions for UI) ──
     let scheduleQuery = `
       SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name
@@ -609,6 +668,44 @@ export const getSessions = async (req, res) => {
     if (stream) { scheduleParams.push(stream); scheduleQuery += ` AND s.stream = $${scheduleParams.length}`; }
 
     const { rows: todayRoutine } = await pool.query(scheduleQuery, scheduleParams);
+
+    // Enrich routine schedules with multi-classroom + camera data
+    for (const routine of todayRoutine) {
+      const { rows: scRows } = await pool.query(`
+        SELECT c.id, c.name, c.camera_url, c.camera_name, c.camera_type, c.camera_quality
+        FROM schedule_classrooms sc
+        JOIN classrooms c ON sc.classroom_id = c.id
+        WHERE sc.schedule_id = $1
+      `, [routine.id]);
+      const classroomsWithCameras = [];
+      for (const cr of scRows) {
+        const { rows: cams } = await pool.query(`
+          SELECT id, camera_url, camera_name, camera_type, camera_quality
+          FROM cameras WHERE classroom_id = $1
+        `, [cr.id]);
+        classroomsWithCameras.push({ ...cr, cameras: cams });
+      }
+      // Fallback: if no junction rows, use legacy classroom_id
+      if (classroomsWithCameras.length === 0 && routine.classroom_id) {
+        const { rows: cams } = await pool.query(`
+          SELECT id, camera_url, camera_name, camera_type, camera_quality
+          FROM cameras WHERE classroom_id = $1
+        `, [routine.classroom_id]);
+        classroomsWithCameras.push({
+          id: routine.classroom_id,
+          name: routine.classroom_name,
+          camera_url: routine.camera_url,
+          camera_name: routine.camera_name,
+          camera_type: routine.camera_type,
+          camera_quality: routine.camera_quality,
+          cameras: cams.length > 0 ? cams : [{ camera_url: routine.camera_url, camera_name: routine.camera_name, camera_type: routine.camera_type, camera_quality: routine.camera_quality }]
+        });
+      }
+      routine._classrooms = classroomsWithCameras;
+      if (classroomsWithCameras.length > 1) {
+        routine.classroom_name = classroomsWithCameras.map(c => c.name).join(', ');
+      }
+    }
 
     // Convert Routine to Session format, deduplicating against real DB sessions
     const upcomingRoutine = todayRoutine
@@ -663,7 +760,8 @@ export const getSessions = async (req, res) => {
           year: routine.year,
           stream: routine.stream,
           status,
-          is_custom: false
+          is_custom: false,
+          classrooms: routine._classrooms || []
         };
       });
 

@@ -338,6 +338,57 @@ const initDb = async () => {
       ALTER TABLE sessions ADD COLUMN IF NOT EXISTS schedule_id INTEGER REFERENCES schedules(id) ON DELETE SET NULL;
     `);
 
+    // ── MULTI-CAMERA AND MULTI-CLASSROOM SUPPORT ──
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cameras (
+        id SERIAL PRIMARY KEY,
+        classroom_id INTEGER NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
+        camera_url VARCHAR(255) UNIQUE NOT NULL,
+        camera_name VARCHAR(255),
+        camera_type VARCHAR(50) NOT NULL DEFAULT 'webcam',
+        camera_quality VARCHAR(20) NOT NULL DEFAULT '720p',
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schedule_classrooms (
+        schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+        classroom_id INTEGER NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
+        PRIMARY KEY (schedule_id, classroom_id)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS session_classrooms (
+        session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        classroom_id INTEGER NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
+        PRIMARY KEY (session_id, classroom_id)
+      );
+    `);
+
+    // Migrate existing cameras from classrooms table to cameras table
+    await client.query(`
+      INSERT INTO cameras (classroom_id, camera_url, camera_name, camera_type, camera_quality, organization_id)
+      SELECT id, camera_url, camera_name, camera_type, camera_quality, organization_id FROM classrooms
+      ON CONFLICT (camera_url) DO NOTHING;
+    `);
+
+    // Migrate existing classroom assignments from schedules table
+    await client.query(`
+      INSERT INTO schedule_classrooms (schedule_id, classroom_id)
+      SELECT id, classroom_id FROM schedules
+      ON CONFLICT DO NOTHING;
+    `);
+
+    // Migrate existing classroom assignments from sessions table
+    await client.query(`
+      INSERT INTO session_classrooms (session_id, classroom_id)
+      SELECT id, classroom_id FROM sessions WHERE classroom_id IS NOT NULL
+      ON CONFLICT DO NOTHING;
+    `);
+
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS time_slots (
         id SERIAL PRIMARY KEY,
