@@ -445,7 +445,13 @@ export const deleteSchedule = async (req, res) => {
 
       const io = req.app.get('io');
       if (io && cancelledSessions.length > 0) {
-        cancelledSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+        cancelledSessions.forEach(s => {
+          if (schedule.organization_id) {
+            io.to(`org_${schedule.organization_id}`).emit('session_ended', { id: s.id, organization_id: schedule.organization_id });
+          } else {
+            io.emit('session_ended', { id: s.id });
+          }
+        });
       }
 
       res.json({ message: 'Routine updated: Class permanently removed and active session stopped.', role: 'admin' });
@@ -550,7 +556,13 @@ export const cancelSchedule = async (req, res) => {
 
       const io = req.app.get('io');
       if (io && activeSessions.length > 0) {
-        activeSessions.forEach(s => io.emit('session_ended', { id: s.id }));
+        activeSessions.forEach(s => {
+          if (schedule.organization_id) {
+            io.to(`org_${schedule.organization_id}`).emit('session_ended', { id: s.id, organization_id: schedule.organization_id });
+          } else {
+            io.emit('session_ended', { id: s.id });
+          }
+        });
       }
     }
 

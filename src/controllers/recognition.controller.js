@@ -50,17 +50,35 @@ export const processRecognition = async (req, res) => {
     }
 
     // 3. Mark attendance
-    await pool.query('INSERT INTO attendance (student_id, session_id, status) VALUES ($1, $2, $3)', [student_id, sessionId, 'present']);
+    const threshold = MIN_CONFIDENCE;
+    await pool.query(
+      'INSERT INTO attendance (student_id, session_id, status, confidence, threshold) VALUES ($1, $2, $3, $4, $5)',
+      [student_id, sessionId, 'present', confidence || null, threshold]
+    );
 
     // 4. Notify dashboard
-    const { rows: student } = await pool.query('SELECT name FROM students WHERE id = $1', [student_id]);
+    const { rows: student } = await pool.query('SELECT name, organization_id FROM students WHERE id = $1', [student_id]);
     const io = req.app.get('io');
-    io.emit('attendance_update', {
+    const orgId = student[0]?.organization_id;
+    const payload = {
       student_id,
       student_name: student[0]?.name || 'Unknown',
       session_id: sessionId,
-      timestamp: new Date()
-    });
+      timestamp: new Date(),
+      organization_id: orgId,
+      confidence: confidence || null,
+      threshold: threshold
+    };
+
+    if (io) {
+      if (orgId) {
+        io.to(`org_${orgId}`).emit('attendance_update', payload);
+        console.log(`[Socket] Emitted attendance_update to room org_${orgId} for student: ${payload.student_name} (Conf: ${payload.confidence})`);
+      } else {
+        io.emit('attendance_update', payload);
+        console.log(`[Socket] Emitted attendance_update globally for student: ${payload.student_name}`);
+      }
+    }
 
     res.status(201).json({ message: 'Attendance marked successfully' });
   } catch (err) {

@@ -28,6 +28,23 @@ router.post('/', authenticateToken, async (req, res) => {
   const { start_time, end_time, raw_start, raw_end, week_start } = req.body;
   try {
     const targetDate = week_start ? week_start : new Date().toISOString().split('T')[0];
+
+    // ── Overlap check: find any active slot whose time range overlaps ──
+    const { rows: overlapping } = await pool.query(
+      `SELECT * FROM time_slots
+       WHERE valid_from <= $1::date + interval '6 days'
+         AND (valid_until IS NULL OR $1::date < valid_until)
+         AND raw_start < $2 AND raw_end > $3`,
+      [targetDate, raw_end, raw_start]
+    );
+    if (overlapping.length > 0) {
+      const clash = overlapping[0];
+      return res.status(409).json({
+        success: false,
+        message: `Time slot overlaps with existing slot ${clash.start_time} – ${clash.end_time}. Please choose a different time range.`
+      });
+    }
+
     const result = await pool.query(
       'INSERT INTO time_slots (start_time, end_time, raw_start, raw_end, valid_from) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [start_time, end_time, raw_start, raw_end, targetDate]
@@ -133,21 +150,38 @@ router.put('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Time slot not found' });
     }
     const oldSlot = slotRows[0];
+
+    // 2. Overlap check: find any OTHER active slot whose time range overlaps the new times
+    const { rows: overlapping } = await pool.query(
+      `SELECT * FROM time_slots
+       WHERE id != $1
+         AND valid_from <= $2::date + interval '6 days'
+         AND (valid_until IS NULL OR $2::date < valid_until)
+         AND raw_start < $3 AND raw_end > $4`,
+      [id, targetDate, raw_end, raw_start]
+    );
+    if (overlapping.length > 0) {
+      const clash = overlapping[0];
+      return res.status(409).json({
+        success: false,
+        message: `Time slot overlaps with existing slot ${clash.start_time} – ${clash.end_time}. Please choose a different time range.`
+      });
+    }
     
-    // 2. Soft-delete the old time slot starting from targetDate
+    // 3. Soft-delete the old time slot starting from targetDate
     await pool.query(
       'UPDATE time_slots SET valid_until = $1 WHERE id = $2',
       [targetDate, id]
     );
 
-    // 3. Create the new time slot starting from targetDate
+    // 4. Create the new time slot starting from targetDate
     const newSlotRes = await pool.query(
       'INSERT INTO time_slots (start_time, end_time, raw_start, raw_end, valid_from) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [start_time, end_time, raw_start, raw_end, targetDate]
     );
     const newSlot = newSlotRes.rows[0];
 
-    // 4. Update all schedules in this slot starting from targetDate to use the new times
+    // 5. Update all schedules in this slot starting from targetDate to use the new times
     const oldRawStartHM = oldSlot.raw_start.substring(0, 5);
     const { rows: activeSchedules } = await pool.query(
       `SELECT * FROM schedules 

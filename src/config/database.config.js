@@ -86,6 +86,12 @@ export const testDatabaseConnection = async () => {
       ALTER TABLE students ADD COLUMN IF NOT EXISTS push_token VARCHAR(255);
     `);
 
+    // ── Attendance Confidence & Threshold Migration ──
+    await client.query(`
+      ALTER TABLE attendance ADD COLUMN IF NOT EXISTS confidence NUMERIC;
+      ALTER TABLE attendance ADD COLUMN IF NOT EXISTS threshold NUMERIC DEFAULT 0.60;
+    `);
+
     // --- ONE-TIME AUTO CLEANUP FOR PRODUCTION ---
     // Automatically delete lingering global "General Class" and "Default Camera" records
     const { rowCount: cCount } = await client.query('DELETE FROM classrooms WHERE organization_id IS NULL');

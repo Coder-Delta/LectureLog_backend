@@ -137,7 +137,10 @@ export const adminSignupInit = async (req, res) => {
 export const adminSignupVerify = async (req, res) => {
   const { email, otp } = req.body;
   try {
-    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1 AND otp_code = $2 AND role = $3', [email, otp, 'admin']);
+    const { rows } = await pool.query(
+      'SELECT u.*, o.name as organization_name, o.slug as organization_slug FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1 AND u.otp_code = $2 AND u.role = $3',
+      [email, otp, 'admin']
+    );
     if (rows.length === 0) return res.status(400).json({ message: 'Invalid OTP' });
     await pool.query("UPDATE organizations SET status = 'active' WHERE id = $1", [rows[0].organization_id]);
     
@@ -146,7 +149,18 @@ export const adminSignupVerify = async (req, res) => {
       process.env.JWT_SECRET || 'secret'
     );
     
-    res.json({ message: 'Verified', token, user: { id: rows[0].id, name: rows[0].name, role: 'admin' } });
+    res.json({ 
+      message: 'Verified', 
+      token, 
+      user: { 
+        id: rows[0].id, 
+        name: rows[0].name, 
+        role: 'admin',
+        organization: rows[0].organization_name,
+        organization_id: rows[0].organization_id,
+        organization_slug: rows[0].organization_slug
+      } 
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -155,7 +169,10 @@ export const adminSignupVerify = async (req, res) => {
 export const login = async (req, res) => {
   const { email, password, role } = req.body;
   try {
-    const { rows } = await pool.query('SELECT u.*, o.name as organization_name FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1', [email]);
+    const { rows } = await pool.query(
+      'SELECT u.*, o.name as organization_name, o.slug as organization_slug FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1',
+      [email]
+    );
     if (rows.length === 0) return res.status(401).json({ message: 'No account found with this institutional email.' });
     
     const user = rows[0];
@@ -175,6 +192,7 @@ export const login = async (req, res) => {
         college_id: user.college_id,
         organization: user.organization_name,
         organization_id: user.organization_id,
+        organization_slug: user.organization_slug,
         year: user.year,
         stream: user.stream,
         image_url: user.image_url
@@ -188,7 +206,10 @@ export const login = async (req, res) => {
 export const adminLogin = async (req, res) => {
   const { email, password, device_id, login_platform } = req.body;
   try {
-    const { rows } = await pool.query('SELECT * FROM users WHERE email = $1 AND role = $2', [email, 'admin']);
+    const { rows } = await pool.query(
+      'SELECT u.*, o.name as organization_name, o.slug as organization_slug FROM users u LEFT JOIN organizations o ON u.organization_id = o.id WHERE u.email = $1 AND u.role = $2',
+      [email, 'admin']
+    );
     if (rows.length === 0) return res.status(401).json({ message: 'Invalid Admin credentials.' });
     const isMatch = await bcrypt.compare(password, rows[0].password);
     if (!isMatch) return res.status(401).json({ message: 'Invalid Admin credentials.' });
@@ -236,8 +257,9 @@ export const adminLogin = async (req, res) => {
         email: rows[0].email,
         role: 'admin',
         college_id: rows[0].college_id || 'ADMIN-1',
-        organization: 'Merge Institute of Technology',
+        organization: rows[0].organization_name || 'Merge Institute of Technology',
         organization_id: rows[0].organization_id,
+        organization_slug: rows[0].organization_slug,
         image_url: rows[0].image_url 
       } 
     });
@@ -250,7 +272,10 @@ export const adminLogin = async (req, res) => {
 export const studentLogin = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const { rows } = await pool.query('SELECT s.*, o.name as organization_name FROM students s LEFT JOIN organizations o ON s.organization_id = o.id WHERE s.email = $1', [email]);
+    const { rows } = await pool.query(
+      'SELECT s.*, o.name as organization_name, o.slug as organization_slug FROM students s LEFT JOIN organizations o ON s.organization_id = o.id WHERE s.email = $1',
+      [email]
+    );
     if (rows.length === 0) return res.status(401).json({ message: 'No student record found for this institutional email.' });
     
     const isMatch = await bcrypt.compare(password, rows[0].password);
@@ -267,6 +292,7 @@ export const studentLogin = async (req, res) => {
         college_id: rows[0].college_id,
         organization: rows[0].organization_name,
         organization_id: rows[0].organization_id,
+        organization_slug: rows[0].organization_slug,
         year: rows[0].year,
         stream: rows[0].stream,
         image_url: rows[0].image_url

@@ -62,6 +62,12 @@ export const finalizeSession = async (sessionId, io = null) => {
     
     if (sessions.length === 0) return;
     const session = sessions[0];
+
+    const { rows: classrooms } = await pool.query(
+      "SELECT organization_id FROM classrooms WHERE id = $1",
+      [session.classroom_id]
+    );
+    const orgId = classrooms[0]?.organization_id;
     
     // 2. Identify students who should have been present (Roster)
     if (session.year && session.stream) {
@@ -154,7 +160,11 @@ export const finalizeSession = async (sessionId, io = null) => {
     }
     
     if (io) {
-      io.emit('session_ended', { id: sessionId });
+      if (orgId) {
+        io.to(`org_${orgId}`).emit('session_ended', { id: sessionId, organization_id: orgId });
+      } else {
+        io.emit('session_ended', { id: sessionId });
+      }
     }
 
     // Trigger AI service to refresh and potentially release cameras immediately
@@ -285,7 +295,8 @@ export const startSession = async (req, res) => {
     `, [subject_id, classroom_id, teacher_id]);
 
     const io = req.app.get('io');
-    io.emit('session_started', {
+    const orgId = meta[0]?.organization_id;
+    const payload = {
       id: sessionId,
       subject_id,
       classroom_id,
@@ -302,8 +313,17 @@ export const startSession = async (req, res) => {
       camera_url: meta[0]?.camera_url,
       camera_type: meta[0]?.camera_type,
       camera_quality: meta[0]?.camera_quality,
-      teacher_name: meta[0]?.teacher_name
-    });
+      teacher_name: meta[0]?.teacher_name,
+      organization_id: orgId
+    };
+
+    if (io) {
+      if (orgId) {
+        io.to(`org_${orgId}`).emit('session_started', payload);
+      } else {
+        io.emit('session_started', payload);
+      }
+    }
 
     // Notify AI service to refresh and start scanning immediately
     axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(e => console.warn('AI Refresh failed on session start'));

@@ -90,25 +90,46 @@ export const initScheduler = (app) => {
           );
 
           const io = app.get('io');
-          if (io) io.emit('session_started', { id: result.rows[0].id, status: 'active' });
+          if (io) {
+            if (schedule.organization_id) {
+              io.to(`org_${schedule.organization_id}`).emit('session_started', {
+                id: result.rows[0].id,
+                status: 'active',
+                organization_id: schedule.organization_id
+              });
+            } else {
+              io.emit('session_started', { id: result.rows[0].id, status: 'active' });
+            }
+          }
           axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
         }
       }
 
       // --- STEP B: Activate 'Scheduled' sessions whose time has come ---
       const { rows: toActivate } = await pool.query(`
-        UPDATE sessions SET status = 'active'
-        WHERE status = 'scheduled' 
-          AND start_time <= $1 
-          AND end_time > $1
-        RETURNING id, subject_id
+        WITH updated AS (
+          UPDATE sessions SET status = 'active'
+          WHERE status = 'scheduled' 
+            AND start_time <= $1 
+            AND end_time > $1
+          RETURNING id, subject_id, classroom_id
+        )
+        SELECT u.*, c.organization_id
+        FROM updated u
+        JOIN classrooms c ON u.classroom_id = c.id
       `, [now]);
 
       if (toActivate.length > 0) {
         const io = app.get('io');
         for (const s of toActivate) {
           console.log(`[Scheduler] ⚡ Activating scheduled session ${s.id}`);
-          if (io) io.emit('session_started', { id: s.id, status: 'active' });
+          if (io) {
+            if (s.organization_id) {
+              io.to(`org_${s.organization_id}`).emit('session_started', { id: s.id, status: 'active', organization_id: s.organization_id });
+            } else {
+              io.emit('session_started', { id: s.id, status: 'active' });
+            }
+          }
         }
         axios.post(`${process.env.AI_SERVICE_URL || 'http://localhost:8001'}/system/refresh`).catch(() => {});
       }

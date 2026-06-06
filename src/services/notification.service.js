@@ -55,6 +55,10 @@ export const initNotificationSockets = (io) => {
           socket.join(roleRoom);
           console.log(`Socket ${socket.id} joined ${roleRoom}`);
 
+          const orgRoom = `org_${organization_id}`;
+          socket.join(orgRoom);
+          console.log(`Socket ${socket.id} joined ${orgRoom}`);
+
           if (role === 'student' && year) {
             const slugStream = slugifyStream(stream);
             const cohortRoom = `student_${organization_id}_${year}_${slugStream}`;
