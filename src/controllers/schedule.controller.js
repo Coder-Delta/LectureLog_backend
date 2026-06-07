@@ -207,7 +207,7 @@ export const getSchedules = async (req, res) => {
           s.id,
           'active',
           s.subject_id,
-          sc.classroom_id,
+          s.classroom_id,
           s.teacher_id,
           s.day_of_week,
           s.start_time,
@@ -219,9 +219,8 @@ export const getSchedules = async (req, res) => {
           $2,
           s.organization_id
         FROM schedules s
-        JOIN schedule_classrooms sc ON s.id = sc.schedule_id
-        JOIN classrooms c ON sc.classroom_id = c.id
-        WHERE s.valid_from <= $1::date
+        LEFT JOIN classrooms c ON s.classroom_id = c.id
+        WHERE s.valid_from <= $1::date + interval '6 days'
           AND (s.valid_until IS NULL OR $1::date < s.valid_until)
           AND s.organization_id = $3
           AND NOT EXISTS (
