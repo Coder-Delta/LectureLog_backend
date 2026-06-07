@@ -88,6 +88,26 @@ export const initScheduler = (app) => {
             'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, schedule_id, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id',
             [schedule.subject_id, schedule.classroom_id, schedule.teacher_id, startStr, endStr, 'active', schedule.year, schedule.stream, schedule.id, false]
           );
+          const newSessionId = result.rows[0].id;
+
+          // Support multi-classroom by copying from schedule_classrooms to session_classrooms
+          const { rows: schedClassrooms } = await pool.query(
+            'SELECT classroom_id FROM schedule_classrooms WHERE schedule_id = $1',
+            [schedule.id]
+          );
+          if (schedClassrooms.length > 0) {
+            for (const sc of schedClassrooms) {
+              await pool.query(
+                'INSERT INTO session_classrooms (session_id, classroom_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                [newSessionId, sc.classroom_id]
+              );
+            }
+          } else if (schedule.classroom_id) {
+            await pool.query(
+              'INSERT INTO session_classrooms (session_id, classroom_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+              [newSessionId, schedule.classroom_id]
+            );
+          }
 
           const io = app.get('io');
           if (io) {
