@@ -89,11 +89,11 @@ export const createSchedule = async (req, res) => {
     
     // 1. Check for collisions in Regular Schedules (classroom, teacher, OR same year+stream)
     const { rows: routineCollisions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name, sc.classroom_id FROM schedules s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
-      JOIN schedule_classrooms sc ON s.id = sc.schedule_id
+      LEFT JOIN schedule_classrooms sc ON s.id = sc.schedule_id
       WHERE s.day_of_week = $1 AND s.start_time::time < $7::time AND s.end_time::time > $2::time
-      AND (sc.classroom_id = ANY($3) OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
+      AND (sc.classroom_id = ANY($3) OR s.classroom_id = ANY($3) OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
       AND (s.valid_until IS NULL OR (s.valid_until > $8::date AND NOT EXISTS (
         SELECT 1 FROM timetable_week_entries twe 
         WHERE twe.week_start = $8::date 
@@ -106,9 +106,9 @@ export const createSchedule = async (req, res) => {
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
       let reason = 'Student Group (Year/Stream)';
-      if (classroomIds.includes(parseInt(collision.classroom_id, 10))) {
-        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.classroom_id]);
-        reason = `Classroom '${cls[0]?.name || collision.classroom_id}'`;
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id, 10))) {
+        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.col_classroom_id]);
+        reason = `Classroom '${cls[0]?.name || collision.col_classroom_id}'`;
       } else if (collision.teacher_id === parseInt(final_teacher_id, 10)) {
         reason = 'Teacher';
       }
@@ -120,10 +120,10 @@ export const createSchedule = async (req, res) => {
 
     // 2. Check for collisions in Active or Scheduled Sessions
     const { rows: sessionCollisions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name, sc.classroom_id FROM sessions s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
-      JOIN session_classrooms sc ON s.id = sc.session_id
-      WHERE (sc.classroom_id = ANY($1) OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
+      LEFT JOIN session_classrooms sc ON s.id = sc.session_id
+      WHERE (sc.classroom_id = ANY($1) OR s.classroom_id = ANY($1) OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
       AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
@@ -132,9 +132,9 @@ export const createSchedule = async (req, res) => {
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
       let reason = 'Student Group';
-      if (classroomIds.includes(parseInt(collision.classroom_id, 10))) {
-        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.classroom_id]);
-        reason = `Classroom '${cls[0]?.name || collision.classroom_id}'`;
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id, 10))) {
+        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.col_classroom_id]);
+        reason = `Classroom '${cls[0]?.name || collision.col_classroom_id}'`;
       } else if (collision.teacher_id === parseInt(final_teacher_id, 10)) {
         reason = `Teacher (${collision.teacher_id})`;
       }
@@ -402,11 +402,11 @@ export const updateSchedule = async (req, res) => {
 
     // 2. Check for collisions in Regular Schedules (excluding current)
     const { rows: routineCollisions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name, sc.classroom_id FROM schedules s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
-      JOIN schedule_classrooms sc ON s.id = sc.schedule_id
+      LEFT JOIN schedule_classrooms sc ON s.id = sc.schedule_id
       WHERE s.day_of_week = $1 AND s.start_time::time < $8::time AND s.end_time::time > $2::time
-      AND (sc.classroom_id = ANY($3) OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
+      AND (sc.classroom_id = ANY($3) OR s.classroom_id = ANY($3) OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
       AND s.id != $7
       AND (s.valid_until IS NULL OR (s.valid_until > $9::date AND NOT EXISTS (
         SELECT 1 FROM timetable_week_entries twe 
@@ -420,9 +420,9 @@ export const updateSchedule = async (req, res) => {
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
       let reason = 'Student Group (Year/Stream)';
-      if (classroomIds.includes(parseInt(collision.classroom_id, 10))) {
-        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.classroom_id]);
-        reason = `Classroom '${cls[0]?.name || collision.classroom_id}'`;
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id, 10))) {
+        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.col_classroom_id]);
+        reason = `Classroom '${cls[0]?.name || collision.col_classroom_id}'`;
       } else if (collision.teacher_id === parseInt(teacher_id, 10)) {
         reason = 'Teacher';
       }
@@ -434,10 +434,10 @@ export const updateSchedule = async (req, res) => {
 
     // 3. Check for collisions in Active or Scheduled Sessions
     const { rows: sessionCollisions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name, sc.classroom_id FROM sessions s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
-      JOIN session_classrooms sc ON s.id = sc.session_id
-      WHERE (sc.classroom_id = ANY($1) OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
+      LEFT JOIN session_classrooms sc ON s.id = sc.session_id
+      WHERE (sc.classroom_id = ANY($1) OR s.classroom_id = ANY($1) OR s.teacher_id = $2 OR (s.year = $3 AND s.stream = $4))
       AND s.status IN ('active', 'scheduled')
       AND TRIM(TO_CHAR(s.start_time AT TIME ZONE 'Asia/Kolkata', 'Day')) = $5
       AND s.start_time::time < $7::time AND s.end_time::time > $6::time
@@ -446,9 +446,9 @@ export const updateSchedule = async (req, res) => {
     if (sessionCollisions.length > 0) {
       const collision = sessionCollisions[0];
       let reason = 'Student Group';
-      if (classroomIds.includes(parseInt(collision.classroom_id, 10))) {
-        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.classroom_id]);
-        reason = `Classroom '${cls[0]?.name || collision.classroom_id}'`;
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id, 10))) {
+        const { rows: cls } = await pool.query('SELECT name FROM classrooms WHERE id = $1', [collision.col_classroom_id]);
+        reason = `Classroom '${cls[0]?.name || collision.col_classroom_id}'`;
       } else if (collision.teacher_id === parseInt(teacher_id, 10)) {
         reason = `Teacher (${collision.teacher_id})`;
       }

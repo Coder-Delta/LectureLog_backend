@@ -190,8 +190,19 @@ export const finalizeSession = async (sessionId, io = null) => {
 };
 
 export const startSession = async (req, res) => {
-  const { subject_id, classroom_id, duration, year, stream } = req.body;
+  const { subject_id, duration, year, stream } = req.body;
   const teacher_id = req.body.teacher_id || req.user?.id;
+
+  let classroomIds = req.body.classroom_ids;
+  if (!classroomIds && req.body.classroom_id) {
+    classroomIds = [parseInt(req.body.classroom_id, 10)];
+  }
+
+  if (!classroomIds || !Array.isArray(classroomIds) || classroomIds.length === 0) {
+    return res.status(400).json({ message: 'At least one classroom is required' });
+  }
+
+  const primary_classroom_id = classroomIds[0];
 
   try {
     if (!req.body.start_time || !req.body.end_time) {
@@ -227,23 +238,24 @@ export const startSession = async (req, res) => {
 
     // 1. Check for overlapping custom sessions (active or scheduled)
     const { rows: overlappingSessions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name FROM sessions s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
+      LEFT JOIN session_classrooms sc ON s.id = sc.session_id
       WHERE (
-          (s.classroom_id = $1 AND s.classroom_id IS NOT NULL) OR 
+          (sc.classroom_id = ANY($1) OR s.classroom_id = ANY($1)) OR 
           s.teacher_id = $2 OR 
           (s.year = $3 AND s.stream = $4)
         )
         AND s.start_time < ($5::timestamptz - interval '1 second')
         AND s.end_time > ($6::timestamptz + interval '1 second')
         AND s.status IN ('active', 'scheduled')
-    `, [classroom_id, teacher_id, year ? parseInt(year, 10) : null, stream, end_time, start_time]);
+    `, [classroomIds, teacher_id, year ? parseInt(year, 10) : null, stream, end_time, start_time]);
 
     if (overlappingSessions.length > 0) {
       const collision = overlappingSessions[0];
       let reason = 'Student Group (Year/Stream)';
 
-      if (classroom_id && collision.classroom_id === parseInt(classroom_id)) {
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id))) {
         reason = 'Classroom';
       } else if (collision.teacher_id === parseInt(teacher_id)) {
         reason = 'Teacher';
@@ -257,12 +269,13 @@ export const startSession = async (req, res) => {
     // 2. Check for collisions with Regular Schedules (Routine) for THAT SPECIFIC DAY
     // We ignore routine slots that are officially CANCELLED for this specific date
     const { rows: routineCollisions } = await pool.query(`
-      SELECT s.*, sub.name as subject_name FROM schedules s
+      SELECT s.*, sub.name as subject_name, sc.classroom_id as col_classroom_id FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
+      LEFT JOIN schedule_classrooms sc ON s.id = sc.schedule_id
       LEFT JOIN cancelled_classes cc ON s.id = cc.schedule_id AND cc.cancel_date = $7::date
       WHERE s.day_of_week = $1
         AND s.start_time < $8::time AND s.end_time > $2::time
-        AND (s.classroom_id = $3 OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
+        AND (sc.classroom_id = ANY($3) OR s.classroom_id = ANY($3) OR s.teacher_id = $4 OR (s.year = $5 AND s.stream = $6))
         AND cc.id IS NULL
         AND s.valid_from <= $7::date
         AND (s.valid_until IS NULL OR $7::date < s.valid_until)
@@ -273,12 +286,12 @@ export const startSession = async (req, res) => {
             AND twe.entry_date = $7::date
             AND twe.action IN ('cancelled', 'deleted')
         )
-    `, [sessionDay, startStr, classroom_id, teacher_id, year, stream, sessionDateStr, endStr]);
+    `, [sessionDay, startStr, classroomIds, teacher_id, year, stream, sessionDateStr, endStr]);
 
     if (routineCollisions.length > 0) {
       const collision = routineCollisions[0];
       let reason = 'Student Group';
-      if (collision.classroom_id === parseInt(classroom_id)) reason = 'Classroom';
+      if (collision.col_classroom_id && classroomIds.includes(parseInt(collision.col_classroom_id))) reason = 'Classroom';
       if (collision.teacher_id === parseInt(teacher_id)) reason = 'Teacher';
 
       return res.status(400).json({
@@ -294,15 +307,15 @@ export const startSession = async (req, res) => {
 
     const result = await pool.query(
       'INSERT INTO sessions (subject_id, classroom_id, teacher_id, start_time, end_time, status, year, stream, is_custom) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id',
-      [subject_id, classroom_id, teacher_id, start_time, end_time, status, year || null, stream || null, true]
+      [subject_id, primary_classroom_id, teacher_id, start_time, end_time, status, year || null, stream || null, true]
     );
     const sessionId = result.rows[0].id;
 
     // Insert into session_classrooms junction table
-    if (classroom_id) {
+    for (const rId of classroomIds) {
       await pool.query(
         'INSERT INTO session_classrooms (session_id, classroom_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-        [sessionId, classroom_id]
+        [sessionId, rId]
       );
     }
 
@@ -311,14 +324,14 @@ export const startSession = async (req, res) => {
       SELECT sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name, u.image_url as teacher_image, u.organization_id
       FROM subjects sub, classrooms c, users u
       WHERE sub.id = $1 AND c.id = $2 AND u.id = $3
-    `, [subject_id, classroom_id, teacher_id]);
+    `, [subject_id, primary_classroom_id, teacher_id]);
 
     const io = req.app.get('io');
     const orgId = meta[0]?.organization_id;
     const payload = {
       id: sessionId,
       subject_id,
-      classroom_id,
+      classroom_id: primary_classroom_id,
       teacher_id,
       start_time,
       end_time,
