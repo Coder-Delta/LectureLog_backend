@@ -228,7 +228,7 @@ export const getSchedules = async (req, res) => {
             WHERE twe.week_start = $1::date
               AND twe.source_type = 'regular'
               AND twe.source_id = s.id
-              AND twe.classroom_id = sc.classroom_id
+              AND twe.classroom_id = s.classroom_id
               AND twe.action = 'active'
           )
       `, [targetWeekStartStr, req.user?.id || null, req.user?.organization_id || null]);
