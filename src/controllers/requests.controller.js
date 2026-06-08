@@ -154,10 +154,11 @@ export const approveRequest = async (req, res) => {
           // Add a custom session for the target teacher to override the schedule for that day
           const { rows: scheds } = await pool.query('SELECT * FROM schedules WHERE id = $1', [classReq.schedule_id]);
           if (scheds.length) {
+             const reqDateStr = new Date(classReq.request_date).toISOString().split('T')[0];
              await pool.query(`
                INSERT INTO sessions (subject_id, teacher_id, classroom_id, status, year, stream, schedule_id, start_time, end_time, is_custom)
                VALUES ($1, $2, $3, 'scheduled', $4, $5, $6, $7, $8, true)
-             `, [scheds[0].subject_id, classReq.target_teacher_id, scheds[0].classroom_id, scheds[0].year, scheds[0].stream, classReq.schedule_id, `${classReq.request_date}T${scheds[0].start_time}`, `${classReq.request_date}T${scheds[0].end_time}`]);
+             `, [scheds[0].subject_id, classReq.target_teacher_id, scheds[0].classroom_id, scheds[0].year, scheds[0].stream, classReq.schedule_id, `${reqDateStr}T${scheds[0].start_time}`, `${reqDateStr}T${scheds[0].end_time}`]);
           }
         } else if (classReq.session_id) {
           await pool.query(`UPDATE sessions SET teacher_id = $1 WHERE id = $2`, [classReq.target_teacher_id, classReq.session_id]);
