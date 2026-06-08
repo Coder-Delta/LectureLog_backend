@@ -12,6 +12,6 @@ const router = express.Router();
 router.get('/', authenticateToken, getRequests);
 router.post('/cancel', authenticateToken, createCancelRequest);
 router.post('/handover', authenticateToken, createHandoverRequest);
-router.post('/:id/approve', authenticateToken, approveRequest);
+router.post('/:id/action', authenticateToken, approveRequest);
 
 export default router;
