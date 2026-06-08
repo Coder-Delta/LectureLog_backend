@@ -61,11 +61,14 @@ export const createCancelRequest = async (req, res) => {
     );
 
     // 3. Notify Admins
-    await pool.query(
-      `INSERT INTO notifications (receiver_role, type, title, message, organization_id)
-       VALUES ('admin', 'alert', 'Class Cancellation Request', 'A teacher has requested to cancel a class.', $1)`,
-      [orgId]
-    );
+    const { rows: admins } = await pool.query("SELECT id FROM users WHERE role = 'admin' AND organization_id = $1", [orgId]);
+    for (const admin of admins) {
+      await pool.query(
+        `INSERT INTO notifications (receiver_id, receiver_role, type, title, message, organization_id)
+         VALUES ($1, 'admin', 'alert', 'Class Cancellation Request', 'A teacher has requested to cancel a class.', $2)`,
+        [admin.id, orgId]
+      );
+    }
 
     res.status(201).json({ message: 'Cancellation request submitted', request: rows[0] });
   } catch (err) {
@@ -100,11 +103,15 @@ export const createHandoverRequest = async (req, res) => {
        VALUES ($1, 'teacher', 'info', 'Class Handover Request', 'You have been requested to take over a class.', $2)`,
       [target_teacher_id, orgId]
     );
-    await pool.query(
-      `INSERT INTO notifications (receiver_role, type, title, message, organization_id)
-       VALUES ('admin', 'info', 'Class Handover Request', 'A class handover request has been initiated.', $1)`,
-      [orgId]
-    );
+    
+    const { rows: admins } = await pool.query("SELECT id FROM users WHERE role = 'admin' AND organization_id = $1", [orgId]);
+    for (const admin of admins) {
+      await pool.query(
+        `INSERT INTO notifications (receiver_id, receiver_role, type, title, message, organization_id)
+         VALUES ($1, 'admin', 'info', 'Class Handover Request', 'A class handover request has been initiated.', $2)`,
+        [admin.id, orgId]
+      );
+    }
 
     res.status(201).json({ message: 'Handover request submitted', request: rows[0] });
   } catch (err) {
