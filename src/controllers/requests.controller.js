@@ -165,7 +165,7 @@ export const approveRequest = async (req, res) => {
       [classReq.requester_id, status, classReq.organization_id]
     );
 
-    res.json({ message: \`Request \${status} successfully\` });
+    res.json({ message: `Request ${status} successfully` });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
