@@ -292,8 +292,8 @@ export const addTeacherAngles = async (req, res) => {
 export const getTeachers = async (req, res) => {
   try {
     const { rows: teachers } = await pool.query(
-      `SELECT id, name, email, college_id, image_url, created_at, face_embedding, face_embeddings, angle_images, is_face_verified
-        FROM users WHERE role = 'teacher' ORDER BY created_at DESC`
+      `SELECT id, name, email, college_id, image_url, created_at, face_embedding, face_embeddings, angle_images, is_face_verified, is_active, status
+        FROM users WHERE role = 'teacher' AND status != 'deleted' ORDER BY created_at DESC`
     );
     const processedTeachers = teachers.map(t => {
       let angleCount = 0;
@@ -320,30 +320,17 @@ export const getTeachers = async (req, res) => {
 export const deleteTeacher = async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Get Cloudinary ID and angle images
-    const teacherResult = await pool.query("SELECT cloudinary_id, angle_images FROM users WHERE id = $1 AND role = 'teacher'", [id]);
-    if (teacherResult.rowCount > 0) {
-      const { cloudinary_id, angle_images } = teacherResult.rows[0];
-      if (cloudinary_id) {
-        await cloudinary.uploader.destroy(cloudinary_id).catch(() => {});
-      }
-      if (angle_images) {
-        for (const key in angle_images) {
-          if (angle_images[key] && angle_images[key].id) {
-            await cloudinary.uploader.destroy(angle_images[key].id).catch(() => {});
-          }
-        }
-      }
-    }
-
-    // 2. Delete from database
-    const result = await pool.query("DELETE FROM users WHERE id = $1 AND role = 'teacher'", [id]);
+    // Soft delete from database (preserve for historical integrity)
+    const result = await pool.query(
+      "UPDATE users SET is_active = false, status = 'deleted' WHERE id = $1 AND role = 'teacher'", 
+      [id]
+    );
     
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Teacher not found' });
     }
 
-    res.json({ message: 'Teacher deleted successfully' });
+    res.json({ message: 'Teacher deleted successfully (soft delete)' });
   } catch (err) {
     console.error('Error deleting teacher:', err);
     res.status(500).json({ message: 'Error deleting teacher', error: err.message });

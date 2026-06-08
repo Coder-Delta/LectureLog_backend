@@ -31,6 +31,7 @@ const initDb = async () => {
         role VARCHAR(20) NOT NULL DEFAULT 'teacher' CHECK (role IN ('teacher', 'admin')),
         face_embedding JSONB,
         is_active BOOLEAN NOT NULL DEFAULT FALSE,
+        status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deleted')),
         otp_code VARCHAR(6),
         otp_expiry TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -42,6 +43,7 @@ const initDb = async () => {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS organization_id INTEGER REFERENCES organizations(id) ON DELETE SET NULL;
       ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'deleted'));
       ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMPTZ;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS face_embedding JSONB;
@@ -478,6 +480,34 @@ const initDb = async () => {
       );
       CREATE INDEX IF NOT EXISTS idx_notifications_receiver ON notifications(receiver_id, receiver_role, is_read);
       CREATE INDEX IF NOT EXISTS idx_notifications_expiry ON notifications(expires_at) WHERE expires_at IS NOT NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS class_requests (
+        id SERIAL PRIMARY KEY,
+        schedule_id INTEGER REFERENCES schedules(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+        requester_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        target_teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        request_type VARCHAR(50) NOT NULL CHECK (request_type IN ('cancel', 'handover')),
+        status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+        reason TEXT,
+        request_date DATE NOT NULL,
+        organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS class_notes (
+        id SERIAL PRIMARY KEY,
+        schedule_id INTEGER REFERENCES schedules(id) ON DELETE CASCADE,
+        session_id INTEGER REFERENCES sessions(id) ON DELETE CASCADE,
+        teacher_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        file_url VARCHAR(255) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        upload_date DATE NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
 
     await client.query('COMMIT');

@@ -198,8 +198,8 @@ router.put('/:id', authenticateToken, async (req, res) => {
       );
 
       // Insert new schedule with new start/end times and valid_from = targetDate
-      await pool.query(
-        'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id, valid_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+      const newScheduleRes = await pool.query(
+        'INSERT INTO schedules (subject_id, classroom_id, teacher_id, day_of_week, start_time, end_time, year, camera_id, stream, organization_id, valid_from) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id',
         [
           schedule.subject_id,
           schedule.classroom_id,
@@ -214,6 +214,13 @@ router.put('/:id', authenticateToken, async (req, res) => {
           targetDate
         ]
       );
+      const newSchedId = newScheduleRes.rows[0].id;
+      
+      // Duplicate schedule_classrooms
+      const { rows: classrooms } = await pool.query('SELECT classroom_id FROM schedule_classrooms WHERE schedule_id = $1', [schedule.id]);
+      for (const cl of classrooms) {
+        await pool.query('INSERT INTO schedule_classrooms (schedule_id, classroom_id) VALUES ($1, $2)', [newSchedId, cl.classroom_id]);
+      }
     }
 
     res.status(200).json({ success: true, message: 'Time slot updated successfully', slot: newSlot });

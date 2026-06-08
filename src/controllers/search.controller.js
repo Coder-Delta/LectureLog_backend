@@ -95,7 +95,7 @@ export const globalSearch = async (req, res) => {
 
     // Sessions
     let sessionQuery = `
-      SELECT s.id, s.status, s.year, s.stream, s.start_time, sub.name as subject_name, u.name as teacher_name
+      SELECT s.id, s.status, s.year, s.stream, s.start_time, sub.name as subject_name, u.name as teacher_name, u.is_active as teacher_is_active
       FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN users u ON s.teacher_id = u.id
@@ -167,7 +167,7 @@ export const sessionSearch = async (req, res) => {
     let statusFilter = filters.status ? `AND s.status ILIKE '%${filters.status}%'` : '';
 
     const { rows: sessions } = await pool.query(`
-      SELECT s.id, s.status, s.year, s.stream, s.start_time, s.end_time, sub.name as subject_name, u.name as teacher_name
+      SELECT s.id, s.status, s.year, s.stream, s.start_time, s.end_time, sub.name as subject_name, u.name as teacher_name, u.is_active as teacher_is_active
       FROM sessions s
       JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN users u ON s.teacher_id = u.id

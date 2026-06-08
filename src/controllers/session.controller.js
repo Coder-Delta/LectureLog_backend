@@ -598,7 +598,7 @@ export const getSessions = async (req, res) => {
     let sessionQuery = `
       SELECT s.id, s.subject_id, s.teacher_id, s.classroom_id, s.status, s.year, s.stream, s.is_custom, s.schedule_id,
              s.start_time, s.end_time,
-             sub.name as subject_name, c.camera_url, c.camera_name, c.camera_type, c.camera_quality, c.name as classroom_name, u.name as teacher_name
+             sub.name as subject_name, c.camera_url, c.camera_name, c.camera_type, c.camera_quality, c.name as classroom_name, u.name as teacher_name, u.is_active as teacher_is_active
        FROM sessions s
        LEFT JOIN subjects sub ON s.subject_id = sub.id
        LEFT JOIN classrooms c ON s.classroom_id = c.id
@@ -659,7 +659,7 @@ export const getSessions = async (req, res) => {
 
     // ── STEP 2: Fetch Today's Routine (virtual sessions for UI) ──
     let scheduleQuery = `
-      SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name
+      SELECT s.*, sub.name as subject_name, c.name as classroom_name, c.camera_name, c.camera_url, c.camera_type, c.camera_quality, u.name as teacher_name, u.is_active as teacher_is_active
       FROM schedules s
       JOIN subjects sub ON s.subject_id = sub.id
       LEFT JOIN classrooms c ON s.classroom_id = c.id

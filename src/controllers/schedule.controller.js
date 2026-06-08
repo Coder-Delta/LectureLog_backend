@@ -236,7 +236,7 @@ export const getSchedules = async (req, res) => {
 
     let query = `
       SELECT s.id, s.subject_id, s.classroom_id, s.teacher_id, s.day_of_week, s.start_time, s.end_time, s.year, s.stream, s.organization_id, s.valid_from, s.valid_until,
-             sub.name as subject_name, u.name as teacher_name,
+             sub.name as subject_name, u.name as teacher_name, u.is_active as teacher_is_active,
              CASE WHEN cc.id IS NOT NULL THEN true ELSE false END as is_cancelled,
              false as is_deleted_history,
              false as is_snapshot_history,
@@ -298,14 +298,14 @@ export const getSchedules = async (req, res) => {
       query += ` WHERE ` + conditions.join(' AND ');
     }
 
-    query += ` GROUP BY s.id, sub.name, u.name, cc.id`;
+    query += ` GROUP BY s.id, sub.name, u.name, u.is_active, cc.id`;
 
     const { rows: schedules } = await pool.query(query, params);
 
     let historyQuery = `
       SELECT twe.id, twe.source_id, twe.subject_id, twe.classroom_id, twe.teacher_id,
              twe.day_of_week, twe.start_time, twe.end_time, twe.year, twe.stream, twe.camera_id, twe.camera_name,
-             sub.name as subject_name, u.name as teacher_name, c.name as classroom_name,
+             sub.name as subject_name, u.name as teacher_name, u.is_active as teacher_is_active, c.name as classroom_name,
              CASE WHEN twe.action = 'active' THEN false ELSE true END as is_cancelled,
              CASE WHEN twe.action = 'deleted' THEN true ELSE false END as is_deleted_history,
              true as is_snapshot_history,
